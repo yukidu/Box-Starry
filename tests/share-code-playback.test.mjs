@@ -27,3 +27,9 @@ test('public share response does not expose youtubeVideoId to the outer page', (
   assert.match(page, /iframe src=\{data\.playbackUrl\}/);
   assert.doesNotMatch(page, /youtubeVideoId/);
 });
+
+test('nested YouTube player sends only the Box Starry origin so YouTube does not reject it with error 153', () => {
+  assert.match(router, /referrerpolicy=\"strict-origin-when-cross-origin\"/);
+  assert.match(router, /'referrer-policy': 'strict-origin-when-cross-origin'/);
+  assert.doesNotMatch(router, /referrerpolicy=\"no-referrer\"/);
+});
