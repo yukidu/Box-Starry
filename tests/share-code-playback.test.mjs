@@ -33,3 +33,11 @@ test('nested YouTube player sends only the Box Starry origin so YouTube does not
   assert.match(router, /'referrer-policy': 'strict-origin-when-cross-origin'/);
   assert.doesNotMatch(router, /referrerpolicy=\"no-referrer\"/);
 });
+
+test('share player uses documented minimal YouTube controls to reduce visible source actions', () => {
+  assert.match(router, /controls=0/);
+  assert.match(router, /disablekb=1/);
+  assert.match(router, /fs=0/);
+  assert.match(router, /iv_load_policy=3/);
+  assert.match(router, /origin=https%3A%2F%2Fbox\.starry\.phd/);
+});
