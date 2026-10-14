@@ -88,15 +88,12 @@ async function mergeVideoCache(env: Env, userId: string, items: YoutubeLibraryIt
 
 export async function syncYoutubeVideosCached(env: Env, userId: string): Promise<{ videos: YoutubeLibraryItem[]; mode: 'cache' | 'incremental' | 'full' }> {
   const current = await state(env, userId, 'videos');
-  const cachedCount = await env.DB.prepare('SELECT COUNT(*) AS count FROM youtube_video_cache WHERE user_id=?')
-    .bind(userId).first<{ count: number }>();
-  const hasCache = Number(cachedCount?.count || 0) > 0;
 
-  if (hasCache && current && age(current.last_incremental_sync) < HOT_CACHE_MS) {
+  if (current && age(current.last_incremental_sync) < HOT_CACHE_MS) {
     return { videos: await cachedVideos(env, userId), mode: 'cache' };
   }
 
-  const full = !hasCache || !current || age(current.last_full_sync) >= FULL_SYNC_MS;
+  const full = !current || age(current.last_full_sync) >= FULL_SYNC_MS;
   if (full) {
     const all: YoutubeLibraryItem[] = [];
     let pageToken = '';
@@ -166,15 +163,12 @@ async function rawPlaylistPage(request: Request, env: Env, user: LocalUser, page
 
 export async function syncYoutubePlaylistsCached(request: Request, env: Env, user: LocalUser): Promise<Response> {
   const current = await state(env, user.id, 'playlists');
-  const cachedCount = await env.DB.prepare('SELECT COUNT(*) AS count FROM youtube_playlist_cache WHERE user_id=?')
-    .bind(user.id).first<{ count: number }>();
-  const hasCache = Number(cachedCount?.count || 0) > 0;
 
-  if (hasCache && current && age(current.last_incremental_sync) < HOT_CACHE_MS) {
+  if (current && age(current.last_incremental_sync) < HOT_CACHE_MS) {
     return json({ playlists: await cachedPlaylists(env, user.id), nextPageToken: null, syncMode: 'cache' });
   }
 
-  const full = !hasCache || !current || age(current.last_full_sync) >= FULL_SYNC_MS;
+  const full = !current || age(current.last_full_sync) >= FULL_SYNC_MS;
   if (full) {
     const all: YoutubePlaylistItem[] = [];
     let pageToken = '';
