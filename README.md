@@ -2,6 +2,8 @@
 
 Starry.phd 生態系的會員影片膠囊：讓會員從手機錄影或電腦 Zoom 錄影快速上傳到自己的 YouTube，並在 Box Starry 管理影片清單與分享權限。
 
+正式網址：`https://box.starry.phd`
+
 ## 核心原則
 
 - Web First、PWA Ready、Capacitor-ready。
@@ -11,14 +13,15 @@ Starry.phd 生態系的會員影片膠囊：讓會員從手機錄影或電腦 Zo
 - 分享連結支援：固定失效日、自訂密碼、第一次成功開啟後 N 天自動失效。
 - 所有確認視窗使用 Starry 規範的琥珀／橘色自訂視窗，不使用瀏覽器 confirm()/alert()。
 
-## 尚待正式環境設定
+## 正式環境
 
-1. Cloudflare 建立獨立 D1：`box-starry-db`，套用 `migrations/0001_init.sql`。
-2. 綁定中央 `starry_id_db` 為 `STARRY_ID_DB`。
-3. Starry ID 將 `boxstarry` 加入允許及自助加入 App 清單，並設定正式回呼。
-4. Google Cloud 啟用 YouTube Data API，建立 OAuth Web Client，填入 `YOUTUBE_CLIENT_ID`、`YOUTUBE_CLIENT_SECRET`。
-5. 建立至少 32-byte 的 `YOUTUBE_TOKEN_ENCRYPTION_KEY` Worker Secret。
-6. 正式自訂網域目前標記「待確認」，確認後再加入 Cloudflare route 與 Google OAuth redirect URI。
+- Box Starry D1：`box-starry-db`。
+- 中央會員 D1：`starry_id_db`，綁定名稱 `STARRY_ID_DB`。
+- Starry ID App ID：`boxstarry`。
+- 正式自訂網域：`https://box.starry.phd`。
+- GitHub `main` 推送會執行驗證、D1 migration、Cloudflare Production Deploy 與正式網址檢查。
+- YouTube OAuth 使用 `YOUTUBE_CLIENT_ID`，`YOUTUBE_CLIENT_SECRET` 與 `YOUTUBE_TOKEN_ENCRYPTION_KEY` 必須以 Cloudflare Secrets 保存，不可寫入 GitHub 程式碼。
+- YouTube OAuth callback：`https://box.starry.phd/auth/youtube/callback`。
 
 ## YouTube 注意事項
 
