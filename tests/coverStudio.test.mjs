@@ -8,21 +8,31 @@ const studioWorker = readFileSync(new URL('../worker/youtubeStudio.ts', import.m
 const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 const types = readFileSync(new URL('../worker/types.ts', import.meta.url), 'utf8');
 
+test('AI cover generation is the first cover method and shows both editable fields', () => {
+  const aiIndex = cover.indexOf('Cloudflare AI 自動生圖');
+  const timelineIndex = cover.indexOf('拖曳影片時間軸抓圖');
+  assert.ok(aiIndex >= 0 && timelineIndex > aiIndex);
+  assert.match(cover, /<span>1<\/span><div><b>Cloudflare AI 自動生圖/);
+  assert.match(cover, /影片標題/);
+  assert.match(cover, /封面標題文字/);
+  assert.match(cover, /aiVideoTitle/);
+  assert.match(cover, /coverTitleText/);
+  assert.doesNotMatch(cover, /aiMode/);
+  assert.doesNotMatch(cover, /自訂文字與條件/);
+});
+
 test('cover studio supports timeline capture and six local video frames', () => {
-  assert.match(cover, /拖曳影片時間軸抓圖/);
-  assert.match(cover, /自動挑選 6 張影片縮圖/);
+  assert.match(cover, /<span>2<\/span><div><b>拖曳影片時間軸抓圖/);
+  assert.match(cover, /<span>3<\/span><div><b>自動挑選 6 張影片縮圖/);
   assert.match(cover, /captureFrame/);
   assert.match(cover, /sixMoments/);
   assert.match(cover, /type="range"/);
   assert.match(cover, /全部在你的裝置上擷取/);
 });
 
-test('cover studio keeps custom image upload and Cloudflare AI generation', () => {
-  assert.match(cover, /上傳自訂圖片/);
+test('cover studio keeps custom image upload as the fourth method', () => {
+  assert.match(cover, /<span>4<\/span><div><b>上傳自訂圖片/);
   assert.match(cover, /accept="image\/jpeg,image\/png"/);
-  assert.match(cover, /Cloudflare AI 自動生圖/);
-  assert.match(cover, /依影片標題/);
-  assert.match(cover, /自訂文字與條件/);
   assert.match(cover, /\/api\/youtube\/studio\/cover-ai/);
 });
 
@@ -33,7 +43,7 @@ test('upload page uses the selected cover for YouTube thumbnail upload', () => {
   assert.match(upload, /\/api\/youtube\/studio\/thumbnail/);
 });
 
-test('Workers AI is bound and uses FLUX.2 dev with smart title understanding', () => {
+test('Workers AI uses video title for scene and cover title for visible headline', () => {
   assert.match(wrangler, /\[ai\]/);
   assert.match(wrangler, /binding = "AI"/);
   assert.match(types, /WorkersAILike/);
@@ -41,6 +51,9 @@ test('Workers AI is bound and uses FLUX.2 dev with smart title understanding', (
   assert.match(studioWorker, /@cf\/qwen\/qwen3-30b-a3b-fp8/);
   assert.match(studioWorker, /@cf\/black-forest-labs\/flux-2-dev/);
   assert.match(studioWorker, /buildSmartCoverPrompt/);
+  assert.match(studioWorker, /videoTitle/);
+  assert.match(studioWorker, /coverTitleText/);
+  assert.match(studioWorker, /Preserve the wording and language exactly/);
   assert.match(studioWorker, /multipart/);
   assert.match(studioWorker, /form\.append\('width', '1280'\)/);
   assert.match(studioWorker, /form\.append\('height', '720'\)/);
