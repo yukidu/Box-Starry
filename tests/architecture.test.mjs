@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const library = readFileSync(new URL('../src/YoutubeLibrary.tsx', import.meta.url), 'utf8');
+const playlistPage = readFileSync(new URL('../src/PlaylistPage.tsx', import.meta.url), 'utf8');
+const playlistCss = readFileSync(new URL('../src/PlaylistPage.css', import.meta.url), 'utf8');
+const playlistsWorker = readFileSync(new URL('../worker/playlists.ts', import.meta.url), 'utf8');
 const denseCss = readFileSync(new URL('../src/YoutubeLibraryDense.css', import.meta.url), 'utf8');
 const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -11,6 +14,7 @@ const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf
 const libraryRouter = readFileSync(new URL('../worker/youtubeLibraryRouter.ts', import.meta.url), 'utf8');
 const youtube = readFileSync(new URL('../worker/youtube.ts', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
+const playlistMigration = readFileSync(new URL('../migrations/0002_playlists.sql', import.meta.url), 'utf8');
 const auth = readFileSync(new URL('../worker/auth.ts', import.meta.url), 'utf8');
 const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
@@ -119,6 +123,39 @@ test('tagged Box uploads self-heal local management records', () => {
   assert.match(libraryRouter, /uploadedViaBoxTag/);
   assert.match(libraryRouter, /INSERT OR IGNORE INTO videos/);
   assert.match(libraryRouter, /youtube_video_id/);
+});
+
+test('playlist page appears in hamburger navigation and splits YouTube vs Box playlists', () => {
+  assert.match(app, /label:'播放清單'/);
+  assert.match(app, /path:'\/playlists'/);
+  assert.match(app, /PlaylistPage/);
+  assert.match(playlistPage, /YouTube 播放清單/);
+  assert.match(playlistPage, /繁星膠囊自訂播放清單/);
+  assert.match(playlistPage, /setTab\('youtube'\)/);
+  assert.match(playlistPage, /setTab\('box'\)/);
+  assert.match(playlistCss, /playlist-tabs/);
+});
+
+test('YouTube playlists sync with existing readonly permission and never request write scope', () => {
+  assert.match(playlistsWorker, /youtube\/v3\/playlists/);
+  assert.match(playlistsWorker, /mine', 'true'/);
+  assert.match(playlistsWorker, /youtube\.readonly/);
+  assert.doesNotMatch(playlistsWorker, /youtube\.force-ssl/);
+  assert.match(libraryRouter, /\/api\/youtube\/playlists/);
+  assert.match(playlistPage, /\/api\/youtube\/playlists/);
+});
+
+test('Box custom playlists have independent tables and CRUD membership APIs', () => {
+  assert.match(playlistMigration, /CREATE TABLE IF NOT EXISTS box_playlists/);
+  assert.match(playlistMigration, /CREATE TABLE IF NOT EXISTS box_playlist_items/);
+  assert.match(playlistsWorker, /\/api\/playlists/);
+  assert.match(playlistsWorker, /INSERT INTO box_playlists/);
+  assert.match(playlistsWorker, /UPDATE box_playlists/);
+  assert.match(playlistsWorker, /DELETE FROM box_playlists/);
+  assert.match(playlistsWorker, /INSERT INTO box_playlist_items/);
+  assert.match(playlistsWorker, /DELETE FROM box_playlist_items/);
+  assert.match(playlistPage, /＋ 新增播放清單/);
+  assert.match(playlistPage, /＋ 加入影片/);
 });
 
 test('YouTube authorization can be revoked and Box-specific data can be deleted', () => {
