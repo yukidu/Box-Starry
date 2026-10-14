@@ -1,16 +1,8 @@
 async function syncYoutubeLibraryInBackground() {
   try {
     localStorage.setItem('box-youtube-sync-requested', new Date().toISOString());
-    let token = '';
-    let pages = 0;
-    do {
-      const path = `/api/youtube/library${token ? `?pageToken=${encodeURIComponent(token)}` : ''}`;
-      const response = await fetch(path, { credentials: 'same-origin' });
-      if (!response.ok) return;
-      const data = await response.json().catch(() => ({}));
-      token = typeof data.nextPageToken === 'string' ? data.nextPageToken : '';
-      pages++;
-    } while (token && pages < 100);
+    const response = await fetch('/api/youtube/library', { credentials: 'same-origin' });
+    if (!response.ok) return;
     localStorage.removeItem('box-youtube-sync-requested');
     window.dispatchEvent(new CustomEvent('box-youtube-synced'));
   } catch {

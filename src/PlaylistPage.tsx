@@ -9,7 +9,14 @@ type BoxPlaylist = { id:string; name:string; description:string; itemCount:numbe
 type BoxPlaylistItem = { youtubeVideoId:string; title:string; thumbnailUrl:string; position:number; addedAt:string };
 type LibraryVideo = { youtubeVideoId:string; title:string; thumbnailUrl:string };
 
+const FULL_SYNC_MS = 6 * 60 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 12000;
+
 function go(path:string){history.pushState({},'',path);window.dispatchEvent(new PopStateEvent('popstate'));}
+function safeJsonList<T>(key:string):T[]{try{const parsed=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(parsed)?parsed:[];}catch{return [];}}
+function cacheAge(key:string){const value=localStorage.getItem(key);if(!value)return Number.POSITIVE_INFINITY;const ms=Date.now()-new Date(value).getTime();return Number.isFinite(ms)?Math.max(0,ms):Number.POSITIVE_INFINITY;}
+function mergePlaylists(latest:YoutubePlaylist[],cached:YoutubePlaylist[]){const ids=new Set(latest.map(v=>v.id));return [...latest,...cached.filter(v=>!ids.has(v.id))];}
+async function apiTimed<T>(path:string,timeout=REQUEST_TIMEOUT_MS):Promise<T>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeout);try{return await api<T>(path,{signal:controller.signal});}finally{clearTimeout(timer);}}
 
 function LoginGate(){return <div className="empty-card"><div className="big-symbol">☰</div><h2>先登入你的 Starry ID</h2><p>登入後才能使用播放清單。</p><button className="btn primary" onClick={()=>location.href='/auth/starry'}>註冊或登入</button></div>}
 
@@ -32,24 +39,39 @@ export default function PlaylistPage({me}:{me:Me}){
   const [selectedVideo,setSelectedVideo]=useState('');
   const [message,setMessage]=useState('');
 
+  const userId=me.user?.id||'';
+  const ytCacheKey=userId?`box-youtube-playlists-cache-${userId}`:'box-youtube-playlists-cache';
+  const ytFullKey=userId?`box-youtube-playlists-full-${userId}`:'box-youtube-playlists-full';
+  const videoCacheKey=userId?`box-youtube-library-cache-${userId}`:'box-youtube-library-cache';
   const selected=box.find(p=>p.id===selectedId)||null;
   const existingIds=useMemo(()=>new Set(items.map(item=>item.youtubeVideoId)),[items]);
   const availableVideos=library.filter(v=>!existingIds.has(v.youtubeVideoId));
 
-  const syncYoutube=async()=>{
+  const syncYoutube=async(forceFull=false,seed?:YoutubePlaylist[])=>{
     if(!me.user||!me.youtubeConnected)return;
-    setYtLoading(true);setYtError('');setYtProgress(8);
+    const cached=seed||safeJsonList<YoutubePlaylist>(ytCacheKey);
+    if(cached.length)setYoutube(cached);
+    const full=forceFull||!cached.length||cacheAge(ytFullKey)>=FULL_SYNC_MS;
+    setYtLoading(true);setYtError('');setYtProgress(cached.length?20:8);
     try{
-      const all:YoutubePlaylist[]=[];let token='';let page=0;
-      do{
-        const data=await api<{playlists:YoutubePlaylist[];nextPageToken:string|null}>(`/api/youtube/playlists${token?`?pageToken=${encodeURIComponent(token)}`:''}`);
+      const first=await apiTimed<{playlists:YoutubePlaylist[];nextPageToken:string|null}>('/api/youtube/playlists');
+      if(!full){
+        const merged=mergePlaylists(first.playlists,cached);
+        setYoutube(merged);localStorage.setItem(ytCacheKey,JSON.stringify(merged));setYtProgress(100);return;
+      }
+      const all=[...first.playlists];let token=first.nextPageToken||'';let page=1;
+      setYoutube(mergePlaylists(all,cached));setYtProgress(token?30:100);
+      while(token){
+        const data=await apiTimed<{playlists:YoutubePlaylist[];nextPageToken:string|null}>(`/api/youtube/playlists?pageToken=${encodeURIComponent(token)}`);
         all.push(...data.playlists);token=data.nextPageToken||'';page++;
-        setYtProgress(token?Math.min(92,18+page*24):100);
+        setYoutube(mergePlaylists(all,cached));setYtProgress(token?Math.min(94,30+page*14):100);
         if(page>100)throw new Error('播放清單數量過多，請稍後再重新同步');
-      }while(token);
-      setYoutube(all);
-    }catch(e){setYtError(e instanceof Error?e.message:'同步 YouTube 播放清單失敗');}
-    finally{setYtLoading(false);}
+      }
+      setYoutube(all);localStorage.setItem(ytCacheKey,JSON.stringify(all));localStorage.setItem(ytFullKey,new Date().toISOString());
+    }catch(e){
+      if(cached.length){setYoutube(cached);setMessage('YouTube 播放清單同步較慢，已先顯示上次成功的清單');}
+      else setYtError(e instanceof DOMException&&e.name==='AbortError'?'YouTube 回應較慢，請再試一次':e instanceof Error?e.message:'同步 YouTube 播放清單失敗');
+    }finally{setYtLoading(false);}
   };
 
   const loadBox=async()=>{
@@ -70,9 +92,11 @@ export default function PlaylistPage({me}:{me:Me}){
 
   const loadLibrary=async()=>{
     if(libraryLoaded||!me.youtubeConnected)return;
+    const cached=safeJsonList<LibraryVideo>(videoCacheKey);
+    if(cached.length){setLibrary(cached);setLibraryLoaded(true);return;}
     const all:LibraryVideo[]=[];let token='';let page=0;
     do{
-      const data=await api<{videos:LibraryVideo[];nextPageToken:string|null}>(`/api/youtube/library${token?`?pageToken=${encodeURIComponent(token)}`:''}`);
+      const data=await apiTimed<{videos:LibraryVideo[];nextPageToken:string|null}>(`/api/youtube/library${token?`?pageToken=${encodeURIComponent(token)}`:''}`);
       all.push(...data.videos.map(v=>({youtubeVideoId:v.youtubeVideoId,title:v.title,thumbnailUrl:v.thumbnailUrl})));
       token=data.nextPageToken||'';page++;
       if(page>100)break;
@@ -80,7 +104,7 @@ export default function PlaylistPage({me}:{me:Me}){
     setLibrary(all);setLibraryLoaded(true);
   };
 
-  useEffect(()=>{if(me.user){syncYoutube();loadBox();}},[me.user?.id,me.youtubeConnected]);
+  useEffect(()=>{if(me.user){const cached=safeJsonList<YoutubePlaylist>(ytCacheKey);if(cached.length)setYoutube(cached);void syncYoutube(false,cached);void loadBox();}},[me.user?.id,me.youtubeConnected]);
   useEffect(()=>{if(tab==='box'&&me.user&&me.youtubeConnected)loadLibrary().catch(()=>undefined);},[tab,me.user?.id,me.youtubeConnected]);
 
   if(!me.user)return <section className="page"><LoginGate/></section>;
@@ -126,9 +150,9 @@ export default function PlaylistPage({me}:{me:Me}){
     </div>
 
     {tab==='youtube'&&<div className="playlist-section">
-      <div className="playlist-section-head"><div><h2>YouTube 播放清單</h2><p>每次進入此頁都會自動同步你的 YouTube 播放清單，只讀取、不會修改 YouTube 原內容。</p></div><button className="btn ghost" onClick={syncYoutube} disabled={ytLoading}>{ytLoading?'同步中…':'立即同步'}</button></div>
-      {ytLoading&&<div className="sync-panel"><div className="sync-copy"><b>正在同步 YouTube 播放清單…</b><span>{youtube.length?`目前已顯示 ${youtube.length} 個播放清單`:'正在連線…'}</span></div><div className="sync-bar"><span style={{width:`${ytProgress}%`}}/></div></div>}
-      {ytError&&<div className="empty-card"><div className="big-symbol">!</div><h2>暫時無法同步</h2><p>{ytError}</p><button className="btn primary" onClick={()=>ytError.includes('重新授權')?location.href='/auth/youtube':syncYoutube()}>{ytError.includes('重新授權')?'重新授權 YouTube':'再試一次'}</button></div>}
+      <div className="playlist-section-head"><div><h2>YouTube 播放清單</h2><p>先顯示上次成功的清單，再於背景同步最新異動；不會修改 YouTube 原內容。</p></div><button className="btn ghost" onClick={()=>syncYoutube(true)} disabled={ytLoading}>{ytLoading?'同步中…':'完整同步'}</button></div>
+      {ytLoading&&<div className="sync-panel"><div className="sync-copy"><b>正在背景同步 YouTube 播放清單…</b><span>{youtube.length?`目前先顯示 ${youtube.length} 個播放清單`:'正在連線…'}</span></div><div className="sync-bar"><span style={{width:`${ytProgress}%`}}/></div></div>}
+      {ytError&&youtube.length===0&&<div className="empty-card"><div className="big-symbol">!</div><h2>暫時無法同步</h2><p>{ytError}</p><button className="btn primary" onClick={()=>ytError.includes('重新授權')?location.href='/auth/youtube':syncYoutube(true)}>{ytError.includes('重新授權')?'重新授權 YouTube':'再試一次'}</button></div>}
       {!ytError&&!ytLoading&&youtube.length===0&&<div className="empty-card"><div className="big-symbol">▶</div><h2>目前沒有 YouTube 播放清單</h2><p>你在 YouTube 建立的播放清單會同步顯示在這裡。</p></div>}
       <div className="youtube-playlists">{youtube.map(p=><article className="youtube-playlist-row" key={p.id}><div className="playlist-thumb">{p.thumbnailUrl?<img src={p.thumbnailUrl} alt=""/>:<span>▶</span>}</div><div className="playlist-copy"><h3>{p.title}</h3><p>{p.description||'沒有說明'}</p><div className="meta"><span>{p.itemCount} 支影片</span><span>{p.privacy==='public'?'公開':p.privacy==='unlisted'?'不公開':'私人'}</span></div></div><a className="btn ghost" href={`https://www.youtube.com/playlist?list=${encodeURIComponent(p.id)}`} target="_blank" rel="noreferrer">開啟</a></article>)}</div>
     </div>}

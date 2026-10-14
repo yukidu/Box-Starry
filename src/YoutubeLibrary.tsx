@@ -17,13 +17,20 @@ type LibraryVideo = {
   uploadedViaBox:boolean;
   box:BoxMeta;
 };
-type LibraryResponse = { videos:LibraryVideo[]; nextPageToken:string|null };
+type LibraryResponse = { videos:LibraryVideo[]; nextPageToken:string|null; syncMode?:string };
 type RegisteredVideo = { id:string; appVisibility:'owner'|'public'; originalFilename:string; fileSize:number; createdAt:string };
+
+const FULL_SYNC_MS = 6 * 60 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 12000;
 
 function go(path:string){history.pushState({},'',path);window.dispatchEvent(new PopStateEvent('popstate'));}
 function formatDate(value:string){try{return new Intl.DateTimeFormat('zh-TW',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value));}catch{return value;}}
 function privacyLabel(value:LibraryVideo['youtubePrivacy']){return value==='private'?'YouTube 私人':value==='public'?'YouTube 公開':'YouTube 不公開';}
 function studioEditUrl(id:string){return `https://studio.youtube.com/video/${encodeURIComponent(id)}/edit`;}
+function safeJsonList<T>(key:string):T[]{try{const parsed=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(parsed)?parsed:[];}catch{return [];}}
+function mergeLatest(latest:LibraryVideo[],cached:LibraryVideo[]){const ids=new Set(latest.map(v=>v.youtubeVideoId));return [...latest,...cached.filter(v=>!ids.has(v.youtubeVideoId))];}
+function cacheAge(key:string){const value=localStorage.getItem(key);if(!value)return Number.POSITIVE_INFINITY;const ms=Date.now()-new Date(value).getTime();return Number.isFinite(ms)?Math.max(0,ms):Number.POSITIVE_INFINITY;}
+async function apiTimed<T>(path:string,timeout=REQUEST_TIMEOUT_MS):Promise<T>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeout);try{return await api<T>(path,{signal:controller.signal});}finally{clearTimeout(timer);}}
 
 function LoginGate(){return <div className="empty-card"><div className="big-symbol">✦</div><h2>先登入你的 Starry ID</h2><p>登入後才能讀取你自己的 YouTube 影片清單。</p><button className="btn primary" onClick={()=>location.href='/auth/starry'}>註冊或登入</button></div>}
 
@@ -48,28 +55,51 @@ function GearMenu({video,onShare,onClose}:{video:LibraryVideo;onShare:()=>void;o
 }
 
 export function YoutubeLibraryPage({me,confirm}:{me:Me;confirm:(state:ConfirmState)=>void}){
-  const [videos,setVideos]=useState<LibraryVideo[]>([]);const [loading,setLoading]=useState(false);const [error,setError]=useState('');const [shareVideo,setShareVideo]=useState<LibraryVideo|null>(null);const [gear,setGear]=useState<string|null>(null);const [progress,setProgress]=useState(0);const [syncCount,setSyncCount]=useState(0);const runId=useRef(0);
-  const firstKey=me.user?`box-youtube-first-sync-${me.user.id}`:'box-youtube-first-sync';
-  const firstSync=typeof localStorage!=='undefined'&&!localStorage.getItem(firstKey);
-  const load=async()=>{
+  const [videos,setVideos]=useState<LibraryVideo[]>([]);const [loading,setLoading]=useState(false);const [error,setError]=useState('');const [syncNote,setSyncNote]=useState('');const [shareVideo,setShareVideo]=useState<LibraryVideo|null>(null);const [gear,setGear]=useState<string|null>(null);const [progress,setProgress]=useState(0);const [syncCount,setSyncCount]=useState(0);const runId=useRef(0);
+  const userId=me.user?.id||'';
+  const cacheKey=userId?`box-youtube-library-cache-${userId}`:'box-youtube-library-cache';
+  const fullKey=userId?`box-youtube-library-full-${userId}`:'box-youtube-library-full';
+  const firstSync=!userId||!localStorage.getItem(fullKey);
+
+  const load=async(forceFull=false,seed?:LibraryVideo[])=>{
     if(!me.user||!me.youtubeConnected)return;
-    const current=++runId.current;setLoading(true);setError('');setProgress(6);setSyncCount(0);setGear(null);
+    const current=++runId.current;
+    const cached=seed||safeJsonList<LibraryVideo>(cacheKey);
+    if(cached.length)setVideos(cached);
+    const full=forceFull||!cached.length||cacheAge(fullKey)>=FULL_SYNC_MS;
+    setLoading(true);setError('');setSyncNote('');setProgress(cached.length?18:6);setSyncCount(cached.length);setGear(null);
     try{
-      const all:LibraryVideo[]=[];let token='';let page=0;
-      do{
+      const first=await apiTimed<LibraryResponse>('/api/youtube/library');
+      if(current!==runId.current)return;
+      if(!full){
+        const merged=mergeLatest(first.videos,cached);
+        setVideos(merged);setSyncCount(first.videos.length);setProgress(100);
+        localStorage.setItem(cacheKey,JSON.stringify(merged));
+        localStorage.setItem('box-youtube-first-sync-'+me.user.id,new Date().toISOString());
+        localStorage.removeItem('box-youtube-sync-requested');
+        setSyncNote('最新異動已同步');
+        return;
+      }
+
+      const all=[...first.videos];let token=first.nextPageToken||'';let page=1;
+      setVideos(mergeLatest(all,cached));setSyncCount(all.length);setProgress(token?28:100);
+      while(token){
         if(current!==runId.current)return;
-        setProgress(Math.min(88,10+page*18));
-        const data=await api<LibraryResponse>(`/api/youtube/library${token?`?pageToken=${encodeURIComponent(token)}`:''}`);
-        all.push(...data.videos);setSyncCount(all.length);token=data.nextPageToken||'';page++;
-        setProgress(token?Math.min(92,18+page*18):100);
+        const data=await apiTimed<LibraryResponse>(`/api/youtube/library?pageToken=${encodeURIComponent(token)}`);
+        all.push(...data.videos);token=data.nextPageToken||'';page++;
+        setVideos(mergeLatest(all,cached));setSyncCount(all.length);setProgress(token?Math.min(94,28+page*12):100);
         if(page>100)throw new Error('影片數量過多，請稍後再重新整理');
-      }while(token);
-      setVideos(all);localStorage.setItem(firstKey,new Date().toISOString());localStorage.removeItem('box-youtube-sync-requested');
-    }catch(e){setError(e instanceof Error?e.message:'讀取 YouTube 影片失敗');}
-    finally{if(current===runId.current)setLoading(false);}
+      }
+      setVideos(all);localStorage.setItem(cacheKey,JSON.stringify(all));localStorage.setItem(fullKey,new Date().toISOString());localStorage.setItem('box-youtube-first-sync-'+me.user.id,new Date().toISOString());localStorage.removeItem('box-youtube-sync-requested');setSyncNote('完整清單已更新');
+    }catch(e){
+      const timeout=e instanceof DOMException&&e.name==='AbortError';
+      if(cached.length){setVideos(cached);setSyncNote(timeout?'背景同步較慢，已先顯示上次成功的清單':'同步暫時失敗，已保留上次成功的清單');}
+      else{setError(timeout?'YouTube 回應較慢，請再試一次':e instanceof Error?e.message:'讀取 YouTube 影片失敗');}
+    }finally{if(current===runId.current)setLoading(false);}
   };
-  useEffect(()=>{load();},[me.user?.id,me.youtubeConnected]);
-  useEffect(()=>{const onFocus=()=>{if(document.visibilityState==='visible'&&localStorage.getItem('box-youtube-sync-requested'))load();};document.addEventListener('visibilitychange',onFocus);return()=>document.removeEventListener('visibilitychange',onFocus);},[me.user?.id,me.youtubeConnected]);
+
+  useEffect(()=>{if(!me.user||!me.youtubeConnected)return;const cached=safeJsonList<LibraryVideo>(cacheKey);if(cached.length)setVideos(cached);void load(false,cached);},[me.user?.id,me.youtubeConnected]);
+  useEffect(()=>{const refresh=()=>{if(document.visibilityState==='visible'&&localStorage.getItem('box-youtube-sync-requested'))void load(false);};const synced=()=>void load(false);document.addEventListener('visibilitychange',refresh);window.addEventListener('box-youtube-synced',synced);return()=>{document.removeEventListener('visibilitychange',refresh);window.removeEventListener('box-youtube-synced',synced);};},[me.user?.id,me.youtubeConnected]);
   if(!me.user)return <LoginGate/>;
   if(!me.youtubeConnected)return <section className="page"><div className="empty-card"><div className="big-symbol">▶</div><h2>先連接你的 YouTube</h2><p>連接後，這裡會直接顯示你 YouTube 後台的影片。</p><button className="btn primary" onClick={()=>go('/youtube')}>連接 YouTube</button></div></section>;
   const reconnect=error.includes('重新授權');
@@ -79,19 +109,21 @@ export function YoutubeLibraryPage({me,confirm}:{me:Me;confirm:(state:ConfirmSta
     return {...v,box:{id:result.video.id,appVisibility:result.video.appVisibility||'owner',originalFilename:result.video.originalFilename||'',fileSize:result.video.fileSize||0,createdAt:result.video.createdAt||new Date().toISOString()}};
   };
   const openShare=async(v:LibraryVideo)=>{try{if(v.youtubePrivacy==='private')throw new Error('YouTube 私人影片無法對外分享，請先改成「不公開」或「公開」');const ready=await registerForBox(v);setShareVideo(ready);}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'無法建立分享'}));}};
-  const visibility=(v:LibraryVideo)=>{if(!v.box)return;confirm({title:v.box.appVisibility==='public'?'改成只有本人可看？':'開放公開訪客觀看？',message:v.box.appVisibility==='public'?'改回私人後，會員公開頁將不再顯示這支影片。':'公開後，任何訪客都能在你的繁星膠囊公開頁看到這支影片。',onConfirm:async()=>{try{await api(`/api/videos/${v.box!.id}`,{method:'PATCH',body:JSON.stringify({appVisibility:v.box!.appVisibility==='public'?'owner':'public'})});await load();}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'操作失敗'}));}}});};
-  return <section className="page"><div className="page-head"><div><span className="eyebrow">YouTube Library</span><h1>我的影片</h1><p>每次進入此頁都會自動同步 YouTube；✦ 代表透過繁星膠囊上傳。</p></div><div className="card-actions"><button className="btn ghost" onClick={load} disabled={loading}>{loading?'同步中…':'立即同步'}</button><button className="btn primary" onClick={()=>go('/')}>＋ 上傳影片</button></div></div>
-    {loading&&<div className="sync-panel"><div className="sync-copy"><b>{firstSync?'第一次同步 YouTube 影片會等比較久一點，請稍候…':'正在同步最新 YouTube 影片…'}</b><span>{syncCount?`已讀取 ${syncCount} 支`:'正在連線…'}</span></div><div className="sync-bar" aria-label="同步進度"><span style={{width:`${progress}%`}}/></div><div className="sync-note">同步期間可以停留在此頁，完成後清單會自動更新。</div></div>}
-    {error&&<div className="empty-card"><div className="big-symbol">!</div><h2>{reconnect?'需要更新 YouTube 授權':'暫時讀不到影片'}</h2><p>{error}</p>{reconnect?<button className="btn primary" onClick={()=>location.href='/auth/youtube'}>重新授權 YouTube</button>:<button className="btn primary" onClick={load}>再試一次</button>}</div>}
+  const visibility=(v:LibraryVideo)=>{if(!v.box)return;confirm({title:v.box.appVisibility==='public'?'改成只有本人可看？':'開放公開訪客觀看？',message:v.box.appVisibility==='public'?'改回私人後，會員公開頁將不再顯示這支影片。':'公開後，任何訪客都能在你的繁星膠囊公開頁看到這支影片。',onConfirm:async()=>{try{await api(`/api/videos/${v.box!.id}`,{method:'PATCH',body:JSON.stringify({appVisibility:v.box!.appVisibility==='public'?'owner':'public'})});await load(false);}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'操作失敗'}));}}});};
+  return <section className="page"><div className="page-head"><div><span className="eyebrow">YouTube Library</span><h1>我的影片</h1><p>進入頁面會先顯示上次清單，再同步最新異動；✦ 代表透過繁星膠囊上傳。</p></div><div className="card-actions"><button className="btn ghost" onClick={()=>load(true)} disabled={loading}>{loading?'同步中…':'完整同步'}</button><button className="btn primary" onClick={()=>go('/')}>＋ 上傳影片</button></div></div>
+    {loading&&<div className="sync-panel"><div className="sync-copy"><b>{firstSync?'第一次同步 YouTube 影片會等比較久一點，請稍候…':'正在背景同步最新 YouTube 異動…'}</b><span>{videos.length?`目前先顯示 ${videos.length} 支影片`:(syncCount?`已讀取 ${syncCount} 支`:'正在連線…')}</span></div><div className="sync-bar" aria-label="同步進度"><span style={{width:`${progress}%`}}/></div><div className="sync-note">同步不會鎖住影片清單，你可以直接使用目前已顯示的內容。</div></div>}
+    {syncNote&&!error&&<div className="notice">{syncNote}</div>}
+    {error&&videos.length===0&&<div className="empty-card"><div className="big-symbol">!</div><h2>{reconnect?'需要更新 YouTube 授權':'暫時讀不到影片'}</h2><p>{error}</p>{reconnect?<button className="btn primary" onClick={()=>location.href='/auth/youtube'}>重新授權 YouTube</button>:<button className="btn primary" onClick={()=>load(true)}>再試一次</button>}</div>}
     {!error&&!loading&&videos.length===0&&<div className="empty-card"><div className="big-symbol">▣</div><h2>YouTube 目前沒有影片</h2><p>你上傳到 YouTube 的影片會自動顯示在這裡。</p><button className="btn primary" onClick={()=>go('/')}>上傳第一支影片</button></div>}
-    {!error&&videos.length>0&&<div className="yt-library-list">{videos.map(v=><article className="yt-library-row" key={v.youtubeVideoId}><div className="yt-library-thumb"><img src={v.thumbnailUrl} alt=""/><span className={`privacy ${v.youtubePrivacy}`}>{privacyLabel(v.youtubePrivacy)}</span></div><div className="yt-library-info"><div className="meta">{v.uploadedViaBox?<span className="public-pill">✦ 繁星膠囊上傳</span>:<span className="owner-pill">YouTube 原有影片</span>}{v.box&&<span className={v.box.appVisibility==='public'?'public-pill':'owner-pill'}>{v.box.appVisibility==='public'?'Box 公開':'Box 私人'}</span>}</div><h2 title={v.title}>{v.title}</h2><p>{v.description||'沒有備註'}</p><div className="meta"><span>{formatDate(v.publishedAt)}</span>{v.box&&<button className="btn ghost" style={{padding:'3px 7px',fontSize:'10px'}} onClick={()=>visibility(v)}>{v.box.appVisibility==='public'?'改 Box 私人':'改 Box 公開'}</button>}</div></div><div className="yt-gear-wrap"><button className="yt-gear" aria-label={`${v.title} 控制選單`} aria-expanded={gear===v.youtubeVideoId} onClick={()=>setGear(gear===v.youtubeVideoId?null:v.youtubeVideoId)}>⚙</button>{gear===v.youtubeVideoId&&<GearMenu video={v} onShare={()=>openShare(v)} onClose={()=>setGear(null)}/>}</div></article>)}</div>}
+    {videos.length>0&&<div className="yt-library-list">{videos.map(v=><article className="yt-library-row" key={v.youtubeVideoId}><div className="yt-library-thumb"><img src={v.thumbnailUrl} alt=""/><span className={`privacy ${v.youtubePrivacy}`}>{privacyLabel(v.youtubePrivacy)}</span></div><div className="yt-library-info"><div className="meta">{v.uploadedViaBox?<span className="public-pill">✦ 繁星膠囊上傳</span>:<span className="owner-pill">YouTube 原有影片</span>}{v.box&&<span className={v.box.appVisibility==='public'?'public-pill':'owner-pill'}>{v.box.appVisibility==='public'?'Box 公開':'Box 私人'}</span>}</div><h2 title={v.title}>{v.title}</h2><p>{v.description||'沒有備註'}</p><div className="meta"><span>{formatDate(v.publishedAt)}</span>{v.box&&<button className="btn ghost" style={{padding:'3px 7px',fontSize:'10px'}} onClick={()=>visibility(v)}>{v.box.appVisibility==='public'?'改 Box 私人':'改 Box 公開'}</button>}</div></div><div className="yt-gear-wrap"><button className="yt-gear" aria-label={`${v.title} 控制選單`} aria-expanded={gear===v.youtubeVideoId} onClick={()=>setGear(gear===v.youtubeVideoId?null:v.youtubeVideoId)}>⚙</button>{gear===v.youtubeVideoId&&<GearMenu video={v} onShare={()=>openShare(v)} onClose={()=>setGear(null)}/>}</div></article>)}</div>}
     {shareVideo&&<ShareCreator video={shareVideo} onClose={()=>setShareVideo(null)}/>} </section>;
 }
 
 export function YoutubeConnectionPage({me,onRefresh,confirm}:{me:Me;onRefresh:()=>Promise<void>|void;confirm:(state:ConfirmState)=>void}){
   if(!me.user)return <LoginGate/>;
-  const disconnect=()=>confirm({title:'解除 YouTube 連線？',message:'Box Starry 會刪除保存的 YouTube 授權並向 Google 撤銷授權。已上傳到 YouTube 的影片不會被刪除。',confirmLabel:'解除連線',onConfirm:async()=>{try{await api('/api/youtube/disconnect',{method:'POST'});await onRefresh();window.dispatchEvent(new CustomEvent('box-toast',{detail:'已解除 YouTube 連線'}));}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'解除失敗'}));}}});
-  const deleteBoxData=()=>confirm({title:'刪除我的 Box Starry 資料？',message:'這會永久刪除 Box Starry 內的影片管理資料、分享連結、YouTube 授權與登入資料，但不會刪除 YouTube 原始影片，也不會刪除你的 Starry ID。',confirmLabel:'永久刪除',onConfirm:async()=>{try{await api('/api/account',{method:'DELETE'});await onRefresh();go('/');window.dispatchEvent(new CustomEvent('box-toast',{detail:'Box Starry 專屬資料已刪除'}));}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'刪除失敗'}));}}});
+  const clearLocal=()=>{localStorage.removeItem(`box-youtube-library-cache-${me.user!.id}`);localStorage.removeItem(`box-youtube-library-full-${me.user!.id}`);};
+  const disconnect=()=>confirm({title:'解除 YouTube 連線？',message:'Box Starry 會刪除保存的 YouTube 授權並向 Google 撤銷授權。已上傳到 YouTube 的影片不會被刪除。',confirmLabel:'解除連線',onConfirm:async()=>{try{await api('/api/youtube/disconnect',{method:'POST'});clearLocal();await onRefresh();window.dispatchEvent(new CustomEvent('box-toast',{detail:'已解除 YouTube 連線'}));}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'解除失敗'}));}}});
+  const deleteBoxData=()=>confirm({title:'刪除我的 Box Starry 資料？',message:'這會永久刪除 Box Starry 內的影片管理資料、分享連結、YouTube 授權與登入資料，但不會刪除 YouTube 原始影片，也不會刪除你的 Starry ID。',confirmLabel:'永久刪除',onConfirm:async()=>{try{await api('/api/account',{method:'DELETE'});clearLocal();await onRefresh();go('/');window.dispatchEvent(new CustomEvent('box-toast',{detail:'Box Starry 專屬資料已刪除'}));}catch(e){window.dispatchEvent(new CustomEvent('box-toast',{detail:e instanceof Error?e.message:'刪除失敗'}));}}});
   return <section className="page narrow"><div className="page-head"><div><span className="eyebrow">YouTube</span><h1>連接我的 YouTube</h1><p>授權後可以上傳影片，並在 Box Starry 同步你自己的 YouTube 影片清單。</p></div></div><div className="connect-card"><div className={`yt-mark ${me.youtubeConnected?'ok':''}`}>▶</div><h2>{me.youtubeConnected?'已連接 YouTube':'尚未連接'}</h2><p>{me.youtubeConnected?'你可以上傳影片，也可以在「我的影片」直接查看自己的 YouTube 後台影片。':'第一次使用需要到 Google 授權。Box Starry 不會知道你的 Google 密碼。'}</p><div className="card-actions"><button className="btn primary" onClick={()=>location.href='/auth/youtube'}>{me.youtubeConnected?'重新授權':'連接我的 YouTube'}</button>{me.youtubeConnected&&<button className="btn danger-ghost" onClick={disconnect}>解除 YouTube 連線</button>}</div><div className="scope-note"><b>目前只使用必要的 YouTube 權限</b><span>用於上傳與讀取你的影片清單；修改名稱、縮圖、播放清單與日期目前由齒輪選單直接帶到該影片的 YouTube Studio 編輯頁。</span></div></div><div className="connect-card"><h2>資料與隱私控制</h2><p>你可以刪除所有 Box Starry 專屬資料。這不會動到 Starry ID，也不會刪除已經在 YouTube 上的影片。</p><div className="card-actions"><button className="btn danger-ghost" onClick={deleteBoxData}>刪除我的 Box Starry 資料</button><a className="btn ghost" href="/privacy">查看隱私權政策</a></div></div></section>;
 }
 
