@@ -3,6 +3,7 @@ import type { Env } from './types';
 import { currentUser } from './auth';
 import { listYoutubeLibraryPage } from './youtube';
 import { cleanText, json } from './security';
+import { handleBoxPlaylists, listYoutubePlaylists } from './playlists';
 
 interface BoxVideoRow {
   id: string;
@@ -77,10 +78,33 @@ async function library(request: Request, env: Env): Promise<Response> {
   }
 }
 
+async function cleanupPlaylistsBeforeAccountDelete(request: Request, env: Env) {
+  const user = await currentUser(request, env);
+  if (!user) return;
+  const rows = await env.DB.prepare('SELECT id FROM box_playlists WHERE owner_user_id=?').bind(user.id).all<{id:string}>();
+  const ids = (rows.results || []).map(row => row.id);
+  for (const id of ids) await env.DB.prepare('DELETE FROM box_playlist_items WHERE playlist_id=?').bind(id).run();
+  await env.DB.prepare('DELETE FROM box_playlists WHERE owner_user_id=?').bind(user.id).run();
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/api/youtube/library' && request.method === 'GET') return library(request, env);
+    if (url.pathname === '/api/youtube/playlists' && request.method === 'GET') {
+      const user = await currentUser(request, env);
+      if (!user) return json({ error: '請先登入 Starry ID' }, 401);
+      return listYoutubePlaylists(request, env, user);
+    }
+    if (url.pathname === '/api/playlists' || url.pathname.startsWith('/api/playlists/')) {
+      const user = await currentUser(request, env);
+      if (!user) return json({ error: '請先登入 Starry ID' }, 401);
+      const response = await handleBoxPlaylists(request, env, user);
+      if (response) return response;
+    }
+    if (url.pathname === '/api/account' && request.method === 'DELETE') {
+      await cleanupPlaylistsBeforeAccountDelete(request, env);
+    }
     return baseWorker.fetch(request, env);
   }
 };
