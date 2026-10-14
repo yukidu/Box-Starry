@@ -1,9 +1,13 @@
 name: Regression
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: box-starry-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
@@ -14,5 +18,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --ignore-scripts
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: box-starry-npm-${{ runner.os }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            box-starry-npm-${{ runner.os }}-
+      - run: npm install --prefer-offline --ignore-scripts
       - run: npm run verify
