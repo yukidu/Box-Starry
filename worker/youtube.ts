@@ -3,7 +3,8 @@ import { cleanText, decryptSecret, encryptSecret, json, randomToken, sha256 } fr
 
 const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
 const READ_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
-const SCOPE = `${UPLOAD_SCOPE} ${READ_SCOPE}`;
+const WRITE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+const SCOPE = `${UPLOAD_SCOPE} ${READ_SCOPE} ${WRITE_SCOPE}`;
 const BOX_UPLOAD_TAG = 'box-starry-upload';
 const STATE_MINUTES = 10;
 
@@ -100,6 +101,12 @@ export async function youtubeLibraryReady(env: Env, userId: string): Promise<boo
   return Boolean(row?.scope && String(row.scope).split(/\s+/).includes(READ_SCOPE));
 }
 
+export async function youtubeStudioReady(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT scope FROM youtube_connections WHERE user_id=? LIMIT 1')
+    .bind(userId).first<{ scope: string }>();
+  return Boolean(row?.scope && String(row.scope).split(/\s+/).includes(WRITE_SCOPE));
+}
+
 export async function disconnectYoutube(env: Env, userId: string): Promise<{ revoked: boolean }> {
   const row = await env.DB.prepare('SELECT encrypted_refresh_token,token_iv FROM youtube_connections WHERE user_id=? LIMIT 1')
     .bind(userId).first<{ encrypted_refresh_token: string; token_iv: string }>();
@@ -125,7 +132,7 @@ export async function disconnectYoutube(env: Env, userId: string): Promise<{ rev
   return { revoked };
 }
 
-async function accessToken(env: Env, userId: string): Promise<string> {
+export async function youtubeAccessToken(env: Env, userId: string): Promise<string> {
   if (!configured(env)) throw new Error('youtube_not_configured');
   const row = await env.DB.prepare(`SELECT encrypted_refresh_token,token_iv FROM youtube_connections WHERE user_id=? LIMIT 1`)
     .bind(userId).first<{ encrypted_refresh_token: string; token_iv: string }>();
@@ -159,7 +166,7 @@ async function youtubeGet(token: string, url: string): Promise<any> {
 
 export async function listYoutubeLibraryPage(env: Env, userId: string, pageToken = ''): Promise<{ videos: YoutubeLibraryItem[]; nextPageToken: string | null }> {
   if (!(await youtubeLibraryReady(env, userId))) throw new Error('youtube_reconnect_required');
-  const token = await accessToken(env, userId);
+  const token = await youtubeAccessToken(env, userId);
   const channelUrl = new URL('https://www.googleapis.com/youtube/v3/channels');
   channelUrl.searchParams.set('part', 'contentDetails');
   channelUrl.searchParams.set('mine', 'true');
@@ -219,16 +226,47 @@ export async function createUploadSession(request: Request, env: Env, user: Loca
   const description = cleanText(body.description, 5000);
   const mimeType = cleanText(body.mimeType, 120) || 'application/octet-stream';
   const fileSize = Number(body.fileSize || 0);
-  const privacy = ['private', 'unlisted', 'public'].includes(String(body.privacy)) ? String(body.privacy) : 'private';
+  const privacy = ['private', 'unlisted', 'public'].includes(String(body.privacy)) ? String(body.privacy) : 'unlisted';
+  const categoryId = /^\d{1,4}$/.test(cleanText(body.categoryId, 8)) ? cleanText(body.categoryId, 8) : '27';
+  const defaultLanguage = cleanText(body.defaultLanguage, 32) || 'zh-TW';
+  const rawTags = Array.isArray(body.tags) ? body.tags : [];
+  const tags = Array.from(new Set([BOX_UPLOAD_TAG, ...rawTags.map(tag => cleanText(tag, 100)).filter(Boolean)])).slice(0, 40);
+  const recordingDate = /^\d{4}-\d{2}-\d{2}$/.test(cleanText(body.recordingDate, 10)) ? cleanText(body.recordingDate, 10) : '';
+  const containsSyntheticMedia = body.containsSyntheticMedia === true;
+  const localizations: Record<string, { title: string; description: string }> = {};
+  const supportedChineseLocales = new Set(['zh-TW', 'zh-HK', 'zh-CN', 'zh-SG', 'zh-Hant', 'zh-Hans']);
+  if (body.localizations && typeof body.localizations === 'object' && !Array.isArray(body.localizations)) {
+    for (const [locale, value] of Object.entries(body.localizations as Record<string, unknown>)) {
+      if (!supportedChineseLocales.has(locale) || !value || typeof value !== 'object') continue;
+      const item = value as Record<string, unknown>;
+      const localizedTitle = cleanText(item.title, 100);
+      if (!localizedTitle) continue;
+      localizations[locale] = { title: localizedTitle, description: cleanText(item.description, 5000) };
+    }
+  }
   if (!title) return json({ error: '請輸入影片名稱' }, 400);
   if (!Number.isFinite(fileSize) || fileSize <= 0) return json({ error: '影片檔案大小不正確' }, 400);
   if (!mimeType.startsWith('video/') && mimeType !== 'application/octet-stream') return json({ error: '請選擇影片檔案' }, 415);
 
   let token: string;
-  try { token = await accessToken(env, user.id); }
+  try { token = await youtubeAccessToken(env, user.id); }
   catch (error) { return json({ error: error instanceof Error ? error.message : 'youtube_auth_failed' }, 409); }
 
-  const yt = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+  const parts = ['snippet', 'status'];
+  const resource: Record<string, unknown> = {
+    snippet: { title, description, tags, categoryId, defaultLanguage },
+    status: { privacyStatus: privacy, selfDeclaredMadeForKids: false, containsSyntheticMedia }
+  };
+  if (recordingDate) {
+    parts.push('recordingDetails');
+    resource.recordingDetails = { recordingDate: `${recordingDate}T00:00:00.000Z` };
+  }
+  if (Object.keys(localizations).length) {
+    parts.push('localizations');
+    resource.localizations = localizations;
+  }
+
+  const yt = await fetch(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=${encodeURIComponent(parts.join(','))}`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
@@ -236,10 +274,7 @@ export async function createUploadSession(request: Request, env: Env, user: Loca
       'x-upload-content-length': String(fileSize),
       'x-upload-content-type': mimeType
     },
-    body: JSON.stringify({
-      snippet: { title, description, tags: [BOX_UPLOAD_TAG] },
-      status: { privacyStatus: privacy, selfDeclaredMadeForKids: false }
-    })
+    body: JSON.stringify(resource)
   });
   const uploadUrl = yt.headers.get('location');
   if (!yt.ok || !uploadUrl) {
