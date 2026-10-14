@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { YoutubeConnectionPage, YoutubeLibraryPage, PrivacyPolicyPage } from './YoutubeLibrary';
+import PlaylistPage from './PlaylistPage';
 
 type User = { id:string; email:string; name:string|null; avatar:string|null; profileSlug:string|null; rank:string|null };
 type Video = { id:string; youtubeVideoId:string; title:string; description:string; youtubePrivacy:'private'|'unlisted'|'public'; appVisibility:'owner'|'public'; uploadStatus:string; originalFilename:string; fileSize:number; thumbnailUrl:string; createdAt:string };
@@ -10,6 +11,7 @@ type ConfirmState = { title:string; message:string; confirmLabel?:string; onConf
 const navItems = [
   { key:'upload', label:'上傳影片', path:'/', icon:'↑' },
   { key:'videos', label:'我的影片', path:'/videos', icon:'▣' },
+  { key:'playlists', label:'播放清單', path:'/playlists', icon:'☷' },
   { key:'shares', label:'分享連結', path:'/shares', icon:'↗' },
   { key:'youtube', label:'YouTube 連線', path:'/youtube', icon:'▶' }
 ];
@@ -65,6 +67,6 @@ export default function App(){
   useEffect(()=>{refresh();const p=()=>setPath(location.pathname);addEventListener('popstate',p);const t=(e:any)=>{setToast(e.detail);setTimeout(()=>setToast(''),3500)};addEventListener('box-toast',t);return()=>{removeEventListener('popstate',p);removeEventListener('box-toast',t)}},[]);
   const publicRoute=path.match(/^\/u\/([^/]+)$/);const shareRoute=path.match(/^\/s\/([A-Za-z0-9_-]+)$/);
   if(publicRoute)return <PublicMemberPage slug={decodeURIComponent(publicRoute[1])}/>;if(shareRoute)return <SharePage token={shareRoute[1]}/>;
-  let page:React.ReactNode;if(path==='/videos')page=<YoutubeLibraryPage me={me} confirm={setConfirm}/>;else if(path==='/shares')page=<SharesPage me={me} confirm={setConfirm}/>;else if(path==='/youtube')page=<YoutubeConnectionPage me={me} onRefresh={refresh} confirm={setConfirm}/>;else if(path==='/privacy')page=<PrivacyPolicyPage/>;else if(path==='/terms')page=<TermsPage/>;else if(path==='/install')page=<InstallPage/>;else page=<UploadPage me={me} onDone={refresh}/>;
+  let page:React.ReactNode;if(path==='/videos')page=<YoutubeLibraryPage me={me} confirm={setConfirm}/>;else if(path==='/playlists')page=<PlaylistPage me={me}/>;else if(path==='/shares')page=<SharesPage me={me} confirm={setConfirm}/>;else if(path==='/youtube')page=<YoutubeConnectionPage me={me} onRefresh={refresh} confirm={setConfirm}/>;else if(path==='/privacy')page=<PrivacyPolicyPage/>;else if(path==='/terms')page=<TermsPage/>;else if(path==='/install')page=<InstallPage/>;else page=<UploadPage me={me} onDone={refresh}/>;
   return <><Navbar me={me} onRefresh={refresh}/><main>{page}</main><ConfirmModal state={confirm} onClose={()=>setConfirm(null)}/>{toast&&<div className="toast">{toast}</div>}<footer><span>繁星 Starry.phd 生態系</span><span>Box Starry · 私人影片膠囊 · <a href="/privacy">隱私權政策</a> · <a href="/terms">使用條款</a></span></footer></>;
 }
