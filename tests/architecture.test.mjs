@@ -93,7 +93,9 @@ test('library sync shows first-run message, progress bar and auto-syncs on page 
   assert.match(library, /第一次同步 YouTube 影片會等比較久一點/);
   assert.match(library, /sync-bar/);
   assert.match(library, /setProgress/);
-  assert.match(library, /useEffect\(\(\)=>\{load\(\);\}/);
+  assert.match(library, /void load\(false,cached\)/);
+  assert.match(library, /box-youtube-library-cache-/);
+  assert.match(library, /REQUEST_TIMEOUT_MS = 12000/);
   assert.match(apiSource, /syncYoutubeLibraryInBackground/);
   assert.match(apiSource, /path === '\/api\/videos'/);
   assert.match(apiSource, /box-youtube-sync-requested/);
