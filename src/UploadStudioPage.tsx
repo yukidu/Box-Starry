@@ -61,6 +61,7 @@ export default function UploadStudioPage({me,onDone}:Props){
   const [progress,setProgress]=useState(0);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
+  const [dragging,setDragging]=useState(false);
 
   useEffect(()=>{
     if(!me.user||!me.youtubeConnected)return;
@@ -83,6 +84,16 @@ export default function UploadStudioPage({me,onDone}:Props){
     const q=ytQuery.trim().toLocaleLowerCase('zh-TW');
     return q?ytPlaylists.filter(p=>p.title.toLocaleLowerCase('zh-TW').includes(q)):ytPlaylists;
   },[ytPlaylists,ytQuery]);
+
+  const selectVideo=(next:File|null)=>{
+    if(!next)return;
+    const isVideo=next.type.startsWith('video/')||/\.(mp4|mov|m4v|webm|avi|mkv|mpeg|mpg|3gp)$/i.test(next.name);
+    if(!isVideo){setMessage('請拖曳影片檔案');return;}
+    setFile(next);
+    setThumbnail(null);
+    setMessage('');
+    if(!title)setTitle(next.name.replace(/\.[^.]+$/,''));
+  };
 
   if(!me.user)return <div className="empty-card"><div className="big-symbol">✦</div><h2>先登入你的 Starry ID</h2><p>登入後才能使用完整上傳工作室。</p><button className="btn primary" onClick={()=>location.href='/auth/starry'}>註冊或登入</button></div>;
 
@@ -151,7 +162,19 @@ export default function UploadStudioPage({me,onDone}:Props){
     <div className="page-head"><div><span className="eyebrow">YouTube Upload Studio</span><h1>上傳影片</h1><p>常用設定直接完成，需要時再打開進階。</p></div></div>
     <div className="studio-layout">
       <div className="studio-media">
-        <label className={`dropzone studio-drop ${file?'has-file':''}`}><input type="file" accept="video/*" onChange={e=>{const f=e.target.files?.[0]||null;setFile(f);setThumbnail(null);if(f&&!title)setTitle(f.name.replace(/\.[^.]+$/,''));}}/><span className="upload-symbol">＋</span><b>{file?file.name:'選擇影片'}</b><small>{file?formatBytes(file.size):'手機相簿、檔案或電腦都可以'}</small></label>
+        <label
+          className={`dropzone studio-drop ${file?'has-file':''} ${dragging?'is-dragging':''}`}
+          onDragEnter={e=>{e.preventDefault();setDragging(true);}}
+          onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';setDragging(true);}}
+          onDragLeave={e=>{e.preventDefault();setDragging(false);}}
+          onDrop={e=>{e.preventDefault();setDragging(false);selectVideo(e.dataTransfer.files?.[0]||null);}}
+          style={dragging?{borderColor:'var(--accent)',background:'var(--soft)'}:undefined}
+        >
+          <input type="file" accept="video/*" onChange={e=>selectVideo(e.target.files?.[0]||null)}/>
+          <span className="upload-symbol">＋</span>
+          <b>{file?file.name:dragging?'放開即可加入影片':'選擇影片或拖曳到這裡'}</b>
+          <small>{file?formatBytes(file.size):'電腦可直接拖曳影片；手機可從相簿或檔案選擇'}</small>
+        </label>
         <CoverStudio videoFile={file} title={title} value={thumbnail} onChange={setThumbnail}/>
       </div>
       <div className="form-card studio-form">
