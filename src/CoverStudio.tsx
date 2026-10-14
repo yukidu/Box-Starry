@@ -111,8 +111,9 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   const [currentTime, setCurrentTime] = useState(0);
   const [frames, setFrames] = useState<FrameChoice[]>([]);
   const [framesBusy, setFramesBusy] = useState(false);
-  const [aiMode, setAiMode] = useState<'title' | 'custom'>('title');
-  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiVideoTitle, setAiVideoTitle] = useState(title);
+  const [aiTitleDirty, setAiTitleDirty] = useState(false);
+  const [coverTitleText, setCoverTitleText] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [source, setSource] = useState('');
@@ -120,9 +121,10 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   const selectedUrl = useMemo(() => value ? URL.createObjectURL(value) : '', [value]);
   useEffect(() => () => { if (selectedUrl) URL.revokeObjectURL(selectedUrl); }, [selectedUrl]);
   useEffect(() => () => { frames.forEach(frame => URL.revokeObjectURL(frame.url)); }, [frames]);
+  useEffect(() => { if (!aiTitleDirty) setAiVideoTitle(title); }, [title, aiTitleDirty]);
 
   useEffect(() => {
-    setDuration(0); setCurrentTime(0); setFrames([]); setMessage('');
+    setDuration(0); setCurrentTime(0); setFrames([]); setMessage(''); setAiTitleDirty(false); setAiVideoTitle(title); setCoverTitleText('');
     if (!videoFile) { setVideoUrl(''); return; }
     const url = URL.createObjectURL(videoFile);
     setVideoUrl(url);
@@ -180,20 +182,21 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   };
 
   const generateAi = async () => {
-    const prompt = (aiMode === 'title' ? title : aiPrompt).trim();
-    if (!prompt) { setMessage(aiMode === 'title' ? '請先輸入影片標題' : '請輸入想要的封面條件'); return; }
-    setAiBusy(true); setMessage('Cloudflare AI 正在產生封面圖…');
+    const videoTitle = aiVideoTitle.trim();
+    const coverText = coverTitleText.trim();
+    if (!videoTitle) { setMessage('請先輸入影片標題'); return; }
+    setAiBusy(true); setMessage('Cloudflare AI 正在理解標題並產生封面圖…');
     try {
       const data = await api<{ image: string; mimeType?: string }>('/api/youtube/studio/cover-ai', {
         method: 'POST',
-        body: JSON.stringify({ prompt, mode: aiMode })
+        body: JSON.stringify({ videoTitle, coverTitleText: coverText })
       });
       const mime = data.mimeType || 'image/jpeg';
       const response = await fetch(`data:${mime};base64,${data.image}`);
       const blob = await response.blob();
       const raw = new File([blob], 'cover-ai-source.jpg', { type: mime });
       const normalized = await normalizeImage(raw, 'cover-ai.jpg');
-      selectCover(normalized, aiMode === 'title' ? 'AI 依影片標題生成' : 'AI 自訂條件生成');
+      selectCover(normalized, coverText ? 'AI 底圖＋封面標題生成' : 'AI 依影片標題生成');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'AI 生圖失敗，請稍後再試');
     } finally {
@@ -209,30 +212,30 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
 
     {selectedUrl && <div className="cover-selected"><img src={selectedUrl} alt="目前選擇的封面"/><span>目前封面</span></div>}
 
+    <div className="cover-method ai-cover-method">
+      <div className="cover-method-title"><span>1</span><div><b>Cloudflare AI 自動生圖</b><small>影片標題決定底圖；封面標題文字決定封面上的標題呈現</small></div></div>
+      <label className="ai-cover-field"><span>影片標題</span><input value={aiVideoTitle} maxLength={300} onChange={e=>{setAiTitleDirty(true);setAiVideoTitle(e.target.value);}} placeholder="會自動抓取上方影片標題，也可自行修改"/><small>AI 會用這段文字理解影片內容並生成封面底圖。</small></label>
+      <label className="ai-cover-field"><span>封面標題文字</span><input value={coverTitleText} maxLength={120} onChange={e=>setCoverTitleText(e.target.value)} placeholder="例如：每天10分鐘，找回健康活力"/><small>可留空；有輸入時，AI 會依這段文字規劃封面標題的字體、位置與視覺效果。</small></label>
+      <button className="btn primary wide" type="button" disabled={aiBusy} onClick={()=>void generateAi()}>{aiBusy?'AI 生圖中…':'✨ 生成封面圖'}</button>
+    </div>
+
     <div className="cover-method">
-      <div className="cover-method-title"><span>1</span><div><b>拖曳影片時間軸抓圖</b><small>移到想要的畫面後，直接設為封面</small></div></div>
+      <div className="cover-method-title"><span>2</span><div><b>拖曳影片時間軸抓圖</b><small>移到想要的畫面後，直接設為封面</small></div></div>
       {videoUrl ? <>
         <video ref={playerRef} src={videoUrl} controls playsInline preload="metadata" onLoadedMetadata={e => { const video=e.currentTarget; setDuration(video.duration || 0); setCurrentTime(video.currentTime || 0); }} onTimeUpdate={e=>setCurrentTime(e.currentTarget.currentTime || 0)} onSeeked={e=>setCurrentTime(e.currentTarget.currentTime || 0)}/>
-        <div className="cover-timeline"><span>{formatTime(currentTime)}</span><input type="range" min="0" max={Math.max(duration, 0.1)} step="0.1" value={Math.min(currentTime, Math.max(duration,0.1))} onChange={e=>{const value=Number(e.target.value);setCurrentTime(value);if(playerRef.current)playerRef.current.currentTime=value;}}/><span>{formatTime(duration)}</span></div>
+        <div className="cover-timeline"><span>{formatTime(currentTime)}</span><input type="range" min="0" max={Math.max(duration, 0.1)} step="0.1" value={Math.min(currentTime, Math.max(duration,0.1))} onChange={e=>{const next=Number(e.target.value);setCurrentTime(next);if(playerRef.current)playerRef.current.currentTime=next;}}/><span>{formatTime(duration)}</span></div>
         <button className="btn ghost wide" type="button" onClick={()=>void captureCurrent()}>📸 把目前畫面設為封面</button>
       </> : <p className="cover-empty">先選擇影片，就可以拖曳時間軸抓圖。</p>}
     </div>
 
     <div className="cover-method">
-      <div className="cover-method-title"><span>2</span><div><b>自動挑選 6 張影片縮圖</b><small>全部在你的裝置上擷取，不會增加 Cloudflare 用量</small></div></div>
+      <div className="cover-method-title"><span>3</span><div><b>自動挑選 6 張影片縮圖</b><small>全部在你的裝置上擷取，不會增加 Cloudflare 用量</small></div></div>
       {framesBusy ? <p className="cover-empty">正在從不同時間自動擷取 6 張圖片…</p> : frames.length ? <div className="cover-six">{frames.map((frame,index)=><button type="button" key={`${frame.time}-${index}`} onClick={()=>selectCover(frame.file,`自動縮圖 ${index+1}`)} className={value===frame.file?'selected':''}><img src={frame.url} alt={`影片縮圖 ${index+1}`}/><small>{formatTime(frame.time)}</small></button>)}</div> : <p className="cover-empty">選擇影片後會自動出現 6 張不同時間的縮圖。</p>}
     </div>
 
     <div className="cover-method">
-      <div className="cover-method-title"><span>3</span><div><b>上傳自訂圖片</b><small>保留原本 JPG / PNG 上傳方式</small></div></div>
+      <div className="cover-method-title"><span>4</span><div><b>上傳自訂圖片</b><small>保留原本 JPG / PNG 上傳方式</small></div></div>
       <label className="cover-upload"><input type="file" accept="image/jpeg,image/png" onChange={e=>{const file=e.target.files?.[0];if(file)selectCover(file,'自訂圖片');}}/><span>＋ 選擇 JPG / PNG</span></label>
-    </div>
-
-    <div className="cover-method ai-cover-method">
-      <div className="cover-method-title"><span>4</span><div><b>Cloudflare AI 自動生圖</b><small>只有按下生成時才會使用 AI 額度</small></div></div>
-      <div className="ai-cover-tabs"><button type="button" className={aiMode==='title'?'active':''} onClick={()=>setAiMode('title')}>依影片標題</button><button type="button" className={aiMode==='custom'?'active':''} onClick={()=>setAiMode('custom')}>自訂文字與條件</button></div>
-      {aiMode==='title' ? <div className="ai-title-preview"><small>會依目前標題生成：</small><b>{title.trim() || '尚未輸入影片標題'}</b></div> : <textarea value={aiPrompt} maxLength={1200} onChange={e=>setAiPrompt(e.target.value)} placeholder="例如：溫暖專業的健康講座封面，人物在右側，留出左側文字空間，明亮乾淨，不要生成文字"/>}
-      <button className="btn primary wide" type="button" disabled={aiBusy} onClick={()=>void generateAi()}>{aiBusy?'AI 生圖中…':'✨ 生成封面圖'}</button>
     </div>
 
     {message && <p className="cover-message">{message}</p>}
