@@ -1,9 +1,9 @@
 import baseWorker from './index';
 import type { Env } from './types';
 import { currentUser } from './auth';
-import { listYoutubeLibraryPage } from './youtube';
-import { cleanText, json } from './security';
-import { handleBoxPlaylists, listYoutubePlaylists } from './playlists';
+import { json } from './security';
+import { handleBoxPlaylists } from './playlists';
+import { syncYoutubePlaylistsCached, syncYoutubeVideosCached } from './youtubeSyncCache';
 
 interface BoxVideoRow {
   id: string;
@@ -17,9 +17,8 @@ interface BoxVideoRow {
 async function library(request: Request, env: Env): Promise<Response> {
   const user = await currentUser(request, env);
   if (!user) return json({ error: '請先登入 Starry ID' }, 401);
-  const pageToken = cleanText(new URL(request.url).searchParams.get('pageToken'), 512);
   try {
-    const page = await listYoutubeLibraryPage(env, user.id, pageToken);
+    const synced = await syncYoutubeVideosCached(env, user.id);
     const rows = await env.DB.prepare(`
       SELECT id,youtube_video_id,app_visibility,original_filename,file_size,created_at
       FROM videos WHERE owner_user_id=?
@@ -27,7 +26,7 @@ async function library(request: Request, env: Env): Promise<Response> {
     const byYoutubeId = new Map<string, BoxVideoRow>();
     for (const row of rows.results || []) byYoutubeId.set(row.youtube_video_id, row);
 
-    for (const item of page.videos) {
+    for (const item of synced.videos) {
       if (byYoutubeId.has(item.youtubeVideoId) || !item.uploadedViaBoxTag) continue;
       const id = crypto.randomUUID();
       await env.DB.prepare(`
@@ -44,15 +43,15 @@ async function library(request: Request, env: Env): Promise<Response> {
         item.youtubePrivacy,
         item.thumbnailUrl
       ).run();
-      const synced = await env.DB.prepare(`
+      const row = await env.DB.prepare(`
         SELECT id,youtube_video_id,app_visibility,original_filename,file_size,created_at
         FROM videos WHERE owner_user_id=? AND youtube_video_id=? LIMIT 1
       `).bind(user.id, item.youtubeVideoId).first<BoxVideoRow>();
-      if (synced) byYoutubeId.set(item.youtubeVideoId, synced);
+      if (row) byYoutubeId.set(item.youtubeVideoId, row);
     }
 
     return json({
-      videos: page.videos.map(item => {
+      videos: synced.videos.map(item => {
         const box = byYoutubeId.get(item.youtubeVideoId) || null;
         return {
           ...item,
@@ -66,7 +65,8 @@ async function library(request: Request, env: Env): Promise<Response> {
           } : null
         };
       }),
-      nextPageToken: page.nextPageToken
+      nextPageToken: null,
+      syncMode: synced.mode
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'youtube_library_failed';
@@ -87,6 +87,16 @@ async function cleanupPlaylistsBeforeAccountDelete(request: Request, env: Env) {
   await env.DB.prepare('DELETE FROM box_playlists WHERE owner_user_id=?').bind(user.id).run();
 }
 
+async function cleanupYoutubeCache(request: Request, env: Env) {
+  const user = await currentUser(request, env);
+  if (!user) return;
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM youtube_video_cache WHERE user_id=?').bind(user.id),
+    env.DB.prepare('DELETE FROM youtube_playlist_cache WHERE user_id=?').bind(user.id),
+    env.DB.prepare('DELETE FROM youtube_sync_state WHERE user_id=?').bind(user.id)
+  ]);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -94,7 +104,7 @@ export default {
     if (url.pathname === '/api/youtube/playlists' && request.method === 'GET') {
       const user = await currentUser(request, env);
       if (!user) return json({ error: '請先登入 Starry ID' }, 401);
-      return listYoutubePlaylists(request, env, user);
+      return syncYoutubePlaylistsCached(request, env, user);
     }
     if (url.pathname === '/api/playlists' || url.pathname.startsWith('/api/playlists/')) {
       const user = await currentUser(request, env);
@@ -102,8 +112,12 @@ export default {
       const response = await handleBoxPlaylists(request, env, user);
       if (response) return response;
     }
+    if (url.pathname === '/api/youtube/disconnect' && request.method === 'POST') {
+      await cleanupYoutubeCache(request, env);
+    }
     if (url.pathname === '/api/account' && request.method === 'DELETE') {
       await cleanupPlaylistsBeforeAccountDelete(request, env);
+      await cleanupYoutubeCache(request, env);
     }
     return baseWorker.fetch(request, env);
   }
