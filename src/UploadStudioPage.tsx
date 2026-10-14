@@ -3,6 +3,7 @@ import { api } from './api';
 import CoverStudio from './CoverStudio';
 import './UploadStudioPage.css';
 
+// 自訂縮圖由 CoverStudio 四合一封面圖工作室提供。
 type Me = { user: { id:string } | null; youtubeConnected:boolean };
 type YoutubePlaylist = { id:string; title:string; itemCount:number; privacy:string };
 type BoxPlaylist = { id:string; name:string; itemCount:number };
