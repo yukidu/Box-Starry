@@ -3,6 +3,7 @@ import type { Env } from './types';
 import { currentUser } from './auth';
 import { listYoutubeLibraryPage } from './youtube';
 import { cleanText, json } from './security';
+import { handleBoxPlaylists, listYoutubePlaylists } from './playlists';
 
 interface BoxVideoRow {
   id: string;
@@ -81,6 +82,17 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/api/youtube/library' && request.method === 'GET') return library(request, env);
+    if (url.pathname === '/api/youtube/playlists' && request.method === 'GET') {
+      const user = await currentUser(request, env);
+      if (!user) return json({ error: '請先登入 Starry ID' }, 401);
+      return listYoutubePlaylists(request, env, user);
+    }
+    if (url.pathname === '/api/playlists' || url.pathname.startsWith('/api/playlists/')) {
+      const user = await currentUser(request, env);
+      if (!user) return json({ error: '請先登入 Starry ID' }, 401);
+      const response = await handleBoxPlaylists(request, env, user);
+      if (response) return response;
+    }
     return baseWorker.fetch(request, env);
   }
 };
