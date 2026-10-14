@@ -23,6 +23,9 @@ binding = "STARRY_ID_DB"
 database_name = "starry_id_db"
 database_id = "01195c92-555e-4816-bddc-5b8cb2e795db"
 
+[ai]
+binding = "AI"
+
 [vars]
 YOUTUBE_CLIENT_ID = "798843680414-rt8bh32bbqe9tr7koi96avub347us89b.apps.googleusercontent.com"
 

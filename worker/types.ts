@@ -18,10 +18,19 @@ export interface FetcherLike {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
+export interface WorkersAIImageResult {
+  image?: string;
+}
+
+export interface WorkersAILike {
+  run(model: string, input: Record<string, unknown>): Promise<WorkersAIImageResult>;
+}
+
 export interface Env {
   DB: D1DatabaseLike;
   STARRY_ID_DB: D1DatabaseLike;
   ASSETS: FetcherLike;
+  AI?: WorkersAILike;
   YOUTUBE_CLIENT_ID?: string;
   YOUTUBE_CLIENT_SECRET?: string;
   YOUTUBE_TOKEN_ENCRYPTION_KEY?: string;

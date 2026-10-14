@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import CoverStudio from './CoverStudio';
 import './UploadStudioPage.css';
 
+// 自訂縮圖由 CoverStudio 四合一封面圖工作室提供。
 type Me = { user: { id:string } | null; youtubeConnected:boolean };
 type YoutubePlaylist = { id:string; title:string; itemCount:number; privacy:string };
 type BoxPlaylist = { id:string; name:string; itemCount:number };
@@ -77,12 +79,10 @@ export default function UploadStudioPage({me,onDone}:Props){
     });
   },[languages]);
 
-  const thumbnailPreview=useMemo(()=>thumbnail?URL.createObjectURL(thumbnail):'',[thumbnail]);
   const filteredYtPlaylists=useMemo(()=>{
     const q=ytQuery.trim().toLocaleLowerCase('zh-TW');
     return q?ytPlaylists.filter(p=>p.title.toLocaleLowerCase('zh-TW').includes(q)):ytPlaylists;
   },[ytPlaylists,ytQuery]);
-  useEffect(()=>()=>{if(thumbnailPreview)URL.revokeObjectURL(thumbnailPreview);},[thumbnailPreview]);
 
   if(!me.user)return <div className="empty-card"><div className="big-symbol">✦</div><h2>先登入你的 Starry ID</h2><p>登入後才能使用完整上傳工作室。</p><button className="btn primary" onClick={()=>location.href='/auth/starry'}>註冊或登入</button></div>;
 
@@ -151,8 +151,8 @@ export default function UploadStudioPage({me,onDone}:Props){
     <div className="page-head"><div><span className="eyebrow">YouTube Upload Studio</span><h1>上傳影片</h1><p>常用設定直接完成，需要時再打開進階。</p></div></div>
     <div className="studio-layout">
       <div className="studio-media">
-        <label className={`dropzone studio-drop ${file?'has-file':''}`}><input type="file" accept="video/*" onChange={e=>{const f=e.target.files?.[0]||null;setFile(f);if(f&&!title)setTitle(f.name.replace(/\.[^.]+$/,''));}}/><span className="upload-symbol">＋</span><b>{file?file.name:'選擇影片'}</b><small>{file?formatBytes(file.size):'手機相簿、檔案或電腦都可以'}</small></label>
-        <label className="thumb-picker"><span>自訂縮圖</span><div className="thumb-preview">{thumbnailPreview?<img src={thumbnailPreview} alt="縮圖預覽"/>:<span>＋ 選擇 JPG / PNG</span>}</div><input type="file" accept="image/jpeg,image/png" onChange={e=>setThumbnail(e.target.files?.[0]||null)}/></label>
+        <label className={`dropzone studio-drop ${file?'has-file':''}`}><input type="file" accept="video/*" onChange={e=>{const f=e.target.files?.[0]||null;setFile(f);setThumbnail(null);if(f&&!title)setTitle(f.name.replace(/\.[^.]+$/,''));}}/><span className="upload-symbol">＋</span><b>{file?file.name:'選擇影片'}</b><small>{file?formatBytes(file.size):'手機相簿、檔案或電腦都可以'}</small></label>
+        <CoverStudio videoFile={file} title={title} value={thumbnail} onChange={setThumbnail}/>
       </div>
       <div className="form-card studio-form">
         <label>標題<input value={title} maxLength={100} onChange={e=>setTitle(e.target.value)} placeholder="輸入影片標題"/></label>
