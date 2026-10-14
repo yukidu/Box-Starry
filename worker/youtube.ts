@@ -81,6 +81,31 @@ export async function youtubeConnected(env: Env, userId: string): Promise<boolea
   return Boolean(row?.ok);
 }
 
+export async function disconnectYoutube(env: Env, userId: string): Promise<{ revoked: boolean }> {
+  const row = await env.DB.prepare('SELECT encrypted_refresh_token,token_iv FROM youtube_connections WHERE user_id=? LIMIT 1')
+    .bind(userId).first<{ encrypted_refresh_token: string; token_iv: string }>();
+  let revoked = false;
+  if (row && env.YOUTUBE_TOKEN_ENCRYPTION_KEY) {
+    try {
+      const refreshToken = await decryptSecret(row.encrypted_refresh_token, row.token_iv, env.YOUTUBE_TOKEN_ENCRYPTION_KEY);
+      const response = await fetch('https://oauth2.googleapis.com/revoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: refreshToken })
+      });
+      revoked = response.ok;
+      if (!response.ok) console.warn('YouTube OAuth revoke returned', response.status);
+    } catch (error) {
+      console.warn('YouTube OAuth revoke skipped', error instanceof Error ? error.message : 'unknown');
+    }
+  }
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM youtube_connections WHERE user_id=?').bind(userId),
+    env.DB.prepare('DELETE FROM oauth_states WHERE user_id=?').bind(userId)
+  ]);
+  return { revoked };
+}
+
 async function accessToken(env: Env, userId: string): Promise<string> {
   if (!configured(env)) throw new Error('youtube_not_configured');
   const row = await env.DB.prepare(`SELECT encrypted_refresh_token,token_iv FROM youtube_connections WHERE user_id=? LIMIT 1`)
@@ -108,7 +133,7 @@ export async function createUploadSession(request: Request, env: Env, user: Loca
   const description = cleanText(body.description, 5000);
   const mimeType = cleanText(body.mimeType, 120) || 'application/octet-stream';
   const fileSize = Number(body.fileSize || 0);
-  const privacy = ['private', 'unlisted'].includes(String(body.privacy)) ? String(body.privacy) : 'private';
+  const privacy = ['private', 'unlisted', 'public'].includes(String(body.privacy)) ? String(body.privacy) : 'private';
   if (!title) return json({ error: '請輸入影片名稱' }, 400);
   if (!Number.isFinite(fileSize) || fileSize <= 0) return json({ error: '影片檔案大小不正確' }, 400);
   if (!mimeType.startsWith('video/') && mimeType !== 'application/octet-stream') return json({ error: '請選擇影片檔案' }, 415);
