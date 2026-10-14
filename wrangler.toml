@@ -8,6 +8,15 @@ directory = "./dist"
 binding = "ASSETS"
 run_worker_first = ["/api/*", "/auth/*"]
 
-# 正式部署前需在 Cloudflare 建立 box-starry-db，並將 D1 綁定為 DB。
-# 同時把既有中央 Starry ID D1 綁定為 STARRY_ID_DB。
+[[d1_databases]]
+binding = "DB"
+database_name = "box-starry-db"
+database_id = "ea7955f4-22fa-4435-8182-81f35c0fc4a9"
+migrations_dir = "migrations"
+
+[[d1_databases]]
+binding = "STARRY_ID_DB"
+database_name = "starry_id_db"
+database_id = "01195c92-555e-4816-bddc-5b8cb2e795db"
+
 # 正式自訂網域依《Starry繁星生態系專案總覽表》規則，在確認後才加入，避免猜測網址。
