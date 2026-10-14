@@ -40,6 +40,28 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Ensure YouTube runtime secrets
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          secret_list="$(npx wrangler secret list 2>&1)"
+
+          if ! printf '%s' "$secret_list" | grep -q 'YOUTUBE_TOKEN_ENCRYPTION_KEY'; then
+            openssl rand -base64 48 | tr -d '\n' | npx wrangler secret put YOUTUBE_TOKEN_ENCRYPTION_KEY
+          fi
+
+          if ! printf '%s' "$secret_list" | grep -q 'YOUTUBE_CLIENT_SECRET'; then
+            if [ -z "${YOUTUBE_CLIENT_SECRET:-}" ]; then
+              echo 'Missing YOUTUBE_CLIENT_SECRET in Cloudflare and GitHub Secrets.'
+              exit 1
+            fi
+            printf '%s' "$YOUTUBE_CLIENT_SECRET" | npx wrangler secret put YOUTUBE_CLIENT_SECRET
+          fi
+
       - name: Verify official website
         shell: bash
         run: |
