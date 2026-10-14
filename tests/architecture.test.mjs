@@ -7,6 +7,7 @@ const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
 const auth = readFileSync(new URL('../worker/auth.ts', import.meta.url), 'utf8');
+const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
 test('uses Starry custom confirmation modal, not native confirm/alert', () => {
   assert.match(app, /ConfirmModal/);
@@ -39,4 +40,13 @@ test('Starry ID app id is isolated for Box Starry', () => {
   assert.match(auth, /APP_ID = 'boxstarry'/);
   assert.match(migration, /starry_identities/);
   assert.match(migration, /youtube_connections/);
+});
+
+test('production config binds both databases and official Box Starry domain', () => {
+  assert.match(wrangler, /pattern = "box\.starry\.phd"/);
+  assert.match(wrangler, /custom_domain = true/);
+  assert.match(wrangler, /binding = "DB"/);
+  assert.match(wrangler, /database_name = "box-starry-db"/);
+  assert.match(wrangler, /binding = "STARRY_ID_DB"/);
+  assert.match(wrangler, /database_name = "starry_id_db"/);
 });
