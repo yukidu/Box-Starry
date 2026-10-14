@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const uploadStudio = readFileSync(new URL('../src/UploadStudioPage.tsx', import.meta.url), 'utf8');
+const uploadStudioCss = readFileSync(new URL('../src/UploadStudioPage.css', import.meta.url), 'utf8');
 const library = readFileSync(new URL('../src/YoutubeLibrary.tsx', import.meta.url), 'utf8');
 const playlistPage = readFileSync(new URL('../src/PlaylistPage.tsx', import.meta.url), 'utf8');
 const playlistCss = readFileSync(new URL('../src/PlaylistPage.css', import.meta.url), 'utf8');
@@ -12,6 +14,8 @@ const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8');
 const libraryRouter = readFileSync(new URL('../worker/youtubeLibraryRouter.ts', import.meta.url), 'utf8');
+const studioRouter = readFileSync(new URL('../worker/studioRouter.ts', import.meta.url), 'utf8');
+const studioWorker = readFileSync(new URL('../worker/youtubeStudio.ts', import.meta.url), 'utf8');
 const youtube = readFileSync(new URL('../worker/youtube.ts', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
 const playlistMigration = readFileSync(new URL('../migrations/0002_playlists.sql', import.meta.url), 'utf8');
@@ -55,8 +59,10 @@ test('Starry ID app id is isolated for Box Starry', () => {
   assert.match(migration, /youtube_connections/);
 });
 
-test('production config binds both databases and routes through YouTube library router', () => {
-  assert.match(wrangler, /main = "worker\/youtubeLibraryRouter\.ts"/);
+test('production config binds both databases and routes through Studio router', () => {
+  assert.match(wrangler, /main = "worker\/studioRouter\.ts"/);
+  assert.match(studioRouter, /youtubeLibraryRouter/);
+  assert.match(studioRouter, /handleYoutubeStudio/);
   assert.match(wrangler, /pattern = "box\.starry\.phd"/);
   assert.match(wrangler, /custom_domain = true/);
   assert.match(wrangler, /binding = "DB"/);
@@ -65,15 +71,55 @@ test('production config binds both databases and routes through YouTube library 
   assert.match(wrangler, /database_name = "starry_id_db"/);
 });
 
-test('YouTube upload supports three privacy modes and requests only upload plus readonly scopes', () => {
-  assert.match(app, /privacy==='public'/);
-  assert.match(app, /privacy==='private'/);
-  assert.match(app, /privacy==='unlisted'/);
+test('YouTube upload supports three privacy modes and Studio write scope', () => {
+  assert.match(uploadStudio, /value="public"/);
+  assert.match(uploadStudio, /value="private"/);
+  assert.match(uploadStudio, /value="unlisted"/);
   assert.match(youtube, /\['private', 'unlisted', 'public'\]/);
   assert.match(youtube, /https:\/\/www\.googleapis\.com\/auth\/youtube\.upload/);
   assert.match(youtube, /https:\/\/www\.googleapis\.com\/auth\/youtube\.readonly/);
-  assert.doesNotMatch(youtube, /youtube\.force-ssl/);
+  assert.match(youtube, /https:\/\/www\.googleapis\.com\/auth\/youtube\.force-ssl/);
   assert.match(app, /YouTube 服務條款/);
+});
+
+test('Studio upload exposes requested common fields and defaults', () => {
+  assert.match(uploadStudio, /自訂縮圖/);
+  assert.match(uploadStudio, />標題</);
+  assert.match(uploadStudio, />說明</);
+  assert.match(uploadStudio, /YouTube 播放清單/);
+  assert.match(uploadStudio, /繁星視界播放清單/);
+  assert.match(uploadStudio, /錄製日期/);
+  assert.match(uploadStudio, /useState<Privacy>\('unlisted'\)/);
+  assert.match(uploadStudio, /useState\('27'\)/);
+  assert.match(uploadStudio, /function today/);
+  assert.match(uploadStudioCss, /playlist-pair/);
+});
+
+test('Studio advanced upload contains category language tags localizations AI and playlist ordering', () => {
+  assert.match(uploadStudio, /進階設定/);
+  assert.match(uploadStudio, /分類/);
+  assert.match(uploadStudio, /教育/);
+  assert.match(uploadStudio, /影片語言/);
+  assert.match(uploadStudio, /標籤/);
+  assert.match(uploadStudio, /多語言標題／說明/);
+  assert.match(uploadStudio, /含 AI／合成或變造內容/);
+  assert.match(uploadStudio, /加入／移出播放清單、播放清單內排序/);
+  assert.match(uploadStudio, /zh-TW/);
+  assert.match(uploadStudio, /zh-HK/);
+  assert.match(uploadStudio, /zh-CN/);
+  assert.match(uploadStudio, /zh-SG/);
+  assert.match(youtube, /containsSyntheticMedia/);
+  assert.match(youtube, /recordingDetails/);
+  assert.match(youtube, /localizations/);
+  assert.match(studioWorker, /snippet\.position/);
+});
+
+test('Studio thumbnail and YouTube playlist writes stay server-side', () => {
+  assert.match(studioWorker, /thumbnails\/set/);
+  assert.match(studioWorker, /playlistItems\?part=snippet/);
+  assert.match(studioWorker, /youtubeStudioReady/);
+  assert.match(uploadStudio, /\/api\/youtube\/studio\/thumbnail/);
+  assert.match(uploadStudio, /\/api\/youtube\/studio\/playlists/);
 });
 
 test('video management reads the authenticated channel uploads and marks Box Starry uploads', () => {
@@ -138,11 +184,11 @@ test('playlist page appears in hamburger navigation and splits YouTube vs Box pl
   assert.match(playlistCss, /playlist-tabs/);
 });
 
-test('YouTube playlists sync with existing readonly permission and never request write scope', () => {
+test('YouTube playlists sync with existing readonly permission and write actions are separate', () => {
   assert.match(playlistsWorker, /youtube\/v3\/playlists/);
   assert.match(playlistsWorker, /mine', 'true'/);
   assert.match(playlistsWorker, /youtube\.readonly/);
-  assert.doesNotMatch(playlistsWorker, /youtube\.force-ssl/);
+  assert.match(studioWorker, /youtubeStudioReady/);
   assert.match(libraryRouter, /\/api\/youtube\/playlists/);
   assert.match(playlistPage, /\/api\/youtube\/playlists/);
 });
