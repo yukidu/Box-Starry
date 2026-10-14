@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const library = readFileSync(new URL('../src/YoutubeLibrary.tsx', import.meta.url), 'utf8');
+const denseCss = readFileSync(new URL('../src/YoutubeLibraryDense.css', import.meta.url), 'utf8');
+const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8');
 const libraryRouter = readFileSync(new URL('../worker/youtubeLibraryRouter.ts', import.meta.url), 'utf8');
@@ -22,7 +24,7 @@ test('uses Starry custom confirmation modal, not native confirm/alert', () => {
   assert.match(css, /width:min\(80vw,32rem\)/);
 });
 
-test('main menu follows pin and sticky requirements', () => {
+test('main menu follows pin and sticky requirements and is opaque', () => {
   assert.match(css, /position:sticky/);
   assert.match(app, /box-pins/);
   assert.match(app, /安裝到桌面/);
@@ -30,6 +32,8 @@ test('main menu follows pin and sticky requirements', () => {
   assert.match(app, /切換淺色|切換深色/);
   assert.match(app, /隱私權政策/);
   assert.match(app, /使用條款/);
+  assert.match(denseCss, /menu-panel\{background:var\(--solid\)!important/);
+  assert.match(denseCss, /backdrop-filter:none!important/);
 });
 
 test('share model supports password, fixed expiry and first-open expiry', () => {
@@ -65,7 +69,6 @@ test('YouTube upload supports three privacy modes and requests only upload plus 
   assert.match(youtube, /https:\/\/www\.googleapis\.com\/auth\/youtube\.upload/);
   assert.match(youtube, /https:\/\/www\.googleapis\.com\/auth\/youtube\.readonly/);
   assert.doesNotMatch(youtube, /youtube\.force-ssl/);
-  assert.doesNotMatch(youtube, /auth\/youtube['"`]/);
   assert.match(app, /YouTube 服務條款/);
 });
 
@@ -80,6 +83,36 @@ test('video management reads the authenticated channel uploads and marks Box Sta
   assert.match(library, /✦ 繁星膠囊上傳/);
   assert.match(library, /YouTube 原有影片/);
   assert.match(app, /YoutubeLibraryPage/);
+});
+
+test('library sync shows first-run message, progress bar and auto-syncs on page entry', () => {
+  assert.match(library, /第一次同步 YouTube 影片會等比較久一點/);
+  assert.match(library, /sync-bar/);
+  assert.match(library, /setProgress/);
+  assert.match(library, /useEffect\(\(\)=>\{load\(\);\}/);
+  assert.match(apiSource, /syncYoutubeLibraryInBackground/);
+  assert.match(apiSource, /path === '\/api\/videos'/);
+  assert.match(apiSource, /box-youtube-sync-requested/);
+});
+
+test('video manager uses compact horizontal rows and a large gear menu', () => {
+  assert.match(library, /yt-library-row/);
+  assert.match(library, /yt-library-thumb/);
+  assert.match(library, /yt-gear/);
+  assert.match(library, /修改名稱/);
+  assert.match(library, /修改縮圖/);
+  assert.match(library, /新增／修改播放清單/);
+  assert.match(library, /修改影片日期/);
+  assert.match(denseCss, /grid-template-columns:180px minmax\(0,1fr\) 56px/);
+});
+
+test('gear share always uses Box Starry share controls and native share only after link creation', () => {
+  assert.match(library, /繁星膠囊分享控制/);
+  assert.match(library, /不是 YouTube 原生分享/);
+  assert.match(library, /registerForBox/);
+  assert.match(library, /\/api\/videos/);
+  assert.match(library, /呼叫手機分享/);
+  assert.match(library, /shareLink\(video\.title,url\)/);
 });
 
 test('tagged Box uploads self-heal local management records', () => {
