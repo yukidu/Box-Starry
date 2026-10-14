@@ -1,8 +1,21 @@
 import type { Env, LocalUser } from './types';
 import { cleanText, decryptSecret, encryptSecret, json, randomToken, sha256 } from './security';
 
-const SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+const READ_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+const SCOPE = `${UPLOAD_SCOPE} ${READ_SCOPE}`;
+const BOX_UPLOAD_TAG = 'box-starry-upload';
 const STATE_MINUTES = 10;
+
+export interface YoutubeLibraryItem {
+  youtubeVideoId: string;
+  title: string;
+  description: string;
+  youtubePrivacy: 'private' | 'unlisted' | 'public';
+  thumbnailUrl: string;
+  publishedAt: string;
+  uploadedViaBoxTag: boolean;
+}
 
 function configured(env: Env): boolean {
   return Boolean(env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET && env.YOUTUBE_TOKEN_ENCRYPTION_KEY);
@@ -81,6 +94,12 @@ export async function youtubeConnected(env: Env, userId: string): Promise<boolea
   return Boolean(row?.ok);
 }
 
+export async function youtubeLibraryReady(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT scope FROM youtube_connections WHERE user_id=? LIMIT 1')
+    .bind(userId).first<{ scope: string }>();
+  return Boolean(row?.scope && String(row.scope).split(/\s+/).includes(READ_SCOPE));
+}
+
 export async function disconnectYoutube(env: Env, userId: string): Promise<{ revoked: boolean }> {
   const row = await env.DB.prepare('SELECT encrypted_refresh_token,token_iv FROM youtube_connections WHERE user_id=? LIMIT 1')
     .bind(userId).first<{ encrypted_refresh_token: string; token_iv: string }>();
@@ -127,6 +146,73 @@ async function accessToken(env: Env, userId: string): Promise<string> {
   return token;
 }
 
+async function youtubeGet(token: string, url: string): Promise<any> {
+  const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const payload: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error('YouTube API read failed', response.status, payload?.error?.message || 'unknown');
+    if (response.status === 401 || response.status === 403) throw new Error('youtube_reconnect_required');
+    throw new Error('youtube_library_failed');
+  }
+  return payload;
+}
+
+export async function listYoutubeLibraryPage(env: Env, userId: string, pageToken = ''): Promise<{ videos: YoutubeLibraryItem[]; nextPageToken: string | null }> {
+  if (!(await youtubeLibraryReady(env, userId))) throw new Error('youtube_reconnect_required');
+  const token = await accessToken(env, userId);
+  const channelUrl = new URL('https://www.googleapis.com/youtube/v3/channels');
+  channelUrl.searchParams.set('part', 'contentDetails');
+  channelUrl.searchParams.set('mine', 'true');
+  const channelPayload = await youtubeGet(token, channelUrl.toString());
+  const uploads = cleanText(channelPayload?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads, 128);
+  if (!uploads) return { videos: [], nextPageToken: null };
+
+  const playlistUrl = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+  playlistUrl.searchParams.set('part', 'contentDetails');
+  playlistUrl.searchParams.set('playlistId', uploads);
+  playlistUrl.searchParams.set('maxResults', '50');
+  if (pageToken) playlistUrl.searchParams.set('pageToken', pageToken);
+  const playlistPayload = await youtubeGet(token, playlistUrl.toString());
+  const ids = (Array.isArray(playlistPayload?.items) ? playlistPayload.items : [])
+    .map((item: any) => cleanText(item?.contentDetails?.videoId, 32))
+    .filter(Boolean);
+  if (!ids.length) return { videos: [], nextPageToken: cleanText(playlistPayload?.nextPageToken, 256) || null };
+
+  const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
+  videosUrl.searchParams.set('part', 'snippet,status');
+  videosUrl.searchParams.set('id', ids.join(','));
+  videosUrl.searchParams.set('maxResults', '50');
+  const videosPayload = await youtubeGet(token, videosUrl.toString());
+  const byId = new Map<string, any>();
+  for (const item of (Array.isArray(videosPayload?.items) ? videosPayload.items : [])) {
+    if (item?.id) byId.set(String(item.id), item);
+  }
+
+  const videos = ids.flatMap((id: string) => {
+    const item = byId.get(id);
+    if (!item) return [];
+    const snippet = item.snippet || {};
+    const status = item.status || {};
+    const tags = Array.isArray(snippet.tags) ? snippet.tags.map((tag: unknown) => String(tag)) : [];
+    const privacy = ['private', 'unlisted', 'public'].includes(String(status.privacyStatus))
+      ? status.privacyStatus as 'private' | 'unlisted' | 'public'
+      : 'private';
+    const thumbnails = snippet.thumbnails || {};
+    const thumbnailUrl = cleanText(thumbnails?.high?.url || thumbnails?.medium?.url || thumbnails?.default?.url, 1000)
+      || `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`;
+    return [{
+      youtubeVideoId: id,
+      title: cleanText(snippet.title, 500) || '未命名影片',
+      description: cleanText(snippet.description, 5000),
+      youtubePrivacy: privacy,
+      thumbnailUrl,
+      publishedAt: cleanText(snippet.publishedAt, 80),
+      uploadedViaBoxTag: tags.includes(BOX_UPLOAD_TAG)
+    } satisfies YoutubeLibraryItem];
+  });
+  return { videos, nextPageToken: cleanText(playlistPayload?.nextPageToken, 256) || null };
+}
+
 export async function createUploadSession(request: Request, env: Env, user: LocalUser): Promise<Response> {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const title = cleanText(body.title, 100);
@@ -151,7 +237,7 @@ export async function createUploadSession(request: Request, env: Env, user: Loca
       'x-upload-content-type': mimeType
     },
     body: JSON.stringify({
-      snippet: { title, description },
+      snippet: { title, description, tags: [BOX_UPLOAD_TAG] },
       status: { privacyStatus: privacy, selfDeclaredMadeForKids: false }
     })
   });
