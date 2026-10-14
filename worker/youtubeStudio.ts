@@ -43,6 +43,29 @@ async function setThumbnail(request: Request, env: Env, user: LocalUser, videoId
   return json({ ok: true, thumbnailUrl: cleanText(thumbs?.high?.url || thumbs?.medium?.url || thumbs?.default?.url, 1000) });
 }
 
+async function generateCover(request: Request, env: Env): Promise<Response> {
+  if (!env.AI) return json({ error: 'Cloudflare AI 尚未啟用，請稍後再試' }, 503);
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const prompt = cleanText(body.prompt, 1200);
+  if (!prompt) return json({ error: '請輸入影片標題或封面條件' }, 400);
+  const mode = body.mode === 'custom' ? 'custom' : 'title';
+  const instruction = mode === 'title'
+    ? `Create a premium YouTube thumbnail visual for a video titled: ${prompt}. Cinematic 16:9 composition, clear focal subject, high contrast, professional lighting, clean background, room for overlay text, no logos, no watermarks, do not render readable text.`
+    : `Create a premium YouTube thumbnail visual in cinematic 16:9 composition. Follow these user requirements: ${prompt}. Professional lighting, strong focal point, no logos, no watermarks. Do not render readable text unless the user explicitly asks for it.`;
+  try {
+    const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+      prompt: instruction,
+      steps: 4
+    });
+    const image = typeof result?.image === 'string' ? result.image : '';
+    if (!image) return json({ error: 'Cloudflare AI 沒有產生圖片，請再試一次' }, 502);
+    return json({ image, mimeType: 'image/jpeg', model: '@cf/black-forest-labs/flux-1-schnell' });
+  } catch (error) {
+    console.error('Cloudflare cover AI failed', error instanceof Error ? error.message : 'unknown');
+    return json({ error: 'AI 生圖暫時失敗，請稍後再試' }, 502);
+  }
+}
+
 async function assignPlaylists(request: Request, env: Env, user: LocalUser): Promise<Response> {
   const access = await requireWrite(env, user);
   if (access instanceof Response) return access;
@@ -85,6 +108,7 @@ export async function handleYoutubeStudio(request: Request, env: Env, user: Loca
   if (url.pathname === '/api/youtube/studio/status' && request.method === 'GET') {
     return json({ writeReady: await youtubeStudioReady(env, user.id) });
   }
+  if (url.pathname === '/api/youtube/studio/cover-ai' && request.method === 'POST') return generateCover(request, env);
   const thumbnail = url.pathname.match(/^\/api\/youtube\/studio\/thumbnail\/([A-Za-z0-9_-]{6,32})$/);
   if (thumbnail && request.method === 'POST') return setThumbnail(request, env, user, thumbnail[1]);
   if (url.pathname === '/api/youtube/studio/playlists' && request.method === 'POST') return assignPlaylists(request, env, user);
