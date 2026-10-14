@@ -1,0 +1,164 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { api } from './api';
+import './UploadStudioPage.css';
+
+type Me = { user: { id:string } | null; youtubeConnected:boolean };
+type YoutubePlaylist = { id:string; title:string; itemCount:number; privacy:string };
+type BoxPlaylist = { id:string; name:string; itemCount:number };
+type Privacy = 'private'|'unlisted'|'public';
+
+type Props = { me:Me; onDone:()=>void };
+
+const CHINESE = [
+  { code:'zh-TW', label:'繁體中文（台灣）' },
+  { code:'zh-HK', label:'繁體中文（香港）' },
+  { code:'zh-CN', label:'簡體中文（中國）' },
+  { code:'zh-SG', label:'簡體中文（新加坡）' },
+  { code:'zh-Hant', label:'繁體中文' },
+  { code:'zh-Hans', label:'簡體中文' }
+];
+const CATEGORY_OPTIONS = [
+  ['27','教育'],['22','人物與網誌'],['28','科學與科技'],['26','操作說明與風格'],['24','娛樂']
+];
+
+function today(){const d=new Date();const offset=d.getTimezoneOffset()*60000;return new Date(d.getTime()-offset).toISOString().slice(0,10);}
+function formatBytes(value:number){if(!value)return '';const units=['B','KB','MB','GB'];let n=value,i=0;while(n>=1024&&i<3){n/=1024;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`;}
+function go(path:string){history.pushState({},'',path);window.dispatchEvent(new PopStateEvent('popstate'));}
+
+async function loadYoutubePlaylists(){
+  const all:YoutubePlaylist[]=[];let token='';let rounds=0;
+  do{
+    const data=await api<{playlists:YoutubePlaylist[];nextPageToken:string|null}>(`/api/youtube/playlists${token?`?pageToken=${encodeURIComponent(token)}`:''}`);
+    all.push(...data.playlists);token=data.nextPageToken||'';rounds++;
+  }while(token&&rounds<20);
+  return all;
+}
+
+export default function UploadStudioPage({me,onDone}:Props){
+  const [file,setFile]=useState<File|null>(null);
+  const [thumbnail,setThumbnail]=useState<File|null>(null);
+  const [title,setTitle]=useState('');
+  const [description,setDescription]=useState('');
+  const [privacy,setPrivacy]=useState<Privacy>('unlisted');
+  const [recordingDate,setRecordingDate]=useState(today());
+  const [categoryId,setCategoryId]=useState('27');
+  const [tagsText,setTagsText]=useState('');
+  const [synthetic,setSynthetic]=useState(false);
+  const [advanced,setAdvanced]=useState(false);
+  const [languages,setLanguages]=useState<string[]>(CHINESE.map(item=>item.code));
+  const [localized,setLocalized]=useState<Record<string,{title:string;description:string}>>({});
+  const [ytPlaylists,setYtPlaylists]=useState<YoutubePlaylist[]>([]);
+  const [boxPlaylists,setBoxPlaylists]=useState<BoxPlaylist[]>([]);
+  const [ytSelected,setYtSelected]=useState<string[]>([]);
+  const [boxSelected,setBoxSelected]=useState<string[]>([]);
+  const [positions,setPositions]=useState<Record<string,string>>({});
+  const [writeReady,setWriteReady]=useState(true);
+  const [progress,setProgress]=useState(0);
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState('');
+
+  useEffect(()=>{
+    if(!me.user||!me.youtubeConnected)return;
+    void Promise.all([
+      loadYoutubePlaylists().then(setYtPlaylists).catch(()=>setYtPlaylists([])),
+      api<{playlists:BoxPlaylist[]}>('/api/playlists').then(x=>setBoxPlaylists(x.playlists)).catch(()=>setBoxPlaylists([])),
+      api<{writeReady:boolean}>('/api/youtube/studio/status').then(x=>setWriteReady(x.writeReady)).catch(()=>setWriteReady(false))
+    ]);
+  },[me.user?.id,me.youtubeConnected]);
+
+  useEffect(()=>{
+    setLocalized(prev=>{
+      const next={...prev};
+      for(const code of languages){if(!next[code])next[code]={title,description};}
+      return next;
+    });
+  },[languages]);
+
+  const thumbnailPreview=useMemo(()=>thumbnail?URL.createObjectURL(thumbnail):'',[thumbnail]);
+  useEffect(()=>()=>{if(thumbnailPreview)URL.revokeObjectURL(thumbnailPreview);},[thumbnailPreview]);
+
+  if(!me.user)return <div className="empty-card"><div className="big-symbol">✦</div><h2>先登入你的 Starry ID</h2><p>登入後才能使用完整上傳工作室。</p><button className="btn primary" onClick={()=>location.href='/auth/starry'}>註冊或登入</button></div>;
+
+  const toggle=(list:string[],value:string,setter:(next:string[])=>void)=>setter(list.includes(value)?list.filter(x=>x!==value):[...list,value]);
+
+  const upload=async()=>{
+    if(!file){setMessage('請先選擇影片');return;}
+    if(!title.trim()){setMessage('請輸入影片名稱');return;}
+    if(!me.youtubeConnected){go('/youtube');return;}
+    if(ytSelected.length&&!writeReady){setMessage('YouTube 播放清單需要重新授權一次編輯權限。');return;}
+    setBusy(true);setProgress(1);setMessage('正在建立 YouTube 上傳工作…');
+    try{
+      const tags=tagsText.split(',').map(x=>x.trim()).filter(Boolean);
+      const localizations:Record<string,{title:string;description:string}>={};
+      for(const code of languages){const item=localized[code]||{title,description};localizations[code]={title:item.title.trim()||title.trim(),description:item.description||description};}
+      const session=await api<{uploadUrl:string}>('/api/youtube/upload-session',{method:'POST',body:JSON.stringify({
+        title,description,mimeType:file.type||'application/octet-stream',fileSize:file.size,privacy,
+        categoryId,defaultLanguage:'zh-TW',recordingDate,tags,containsSyntheticMedia:synthetic,localizations
+      })});
+      const yt:any=await new Promise((resolve,reject)=>{
+        const xhr=new XMLHttpRequest();xhr.open('PUT',session.uploadUrl);xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');
+        xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.max(2,Math.round(e.loaded/e.total*88)));};
+        xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){try{resolve(JSON.parse(xhr.responseText))}catch{reject(new Error('YouTube 回傳資料無法讀取'))}}else reject(new Error('YouTube 上傳失敗，請稍後再試'));};
+        xhr.onerror=()=>reject(new Error('網路中斷，請重新上傳'));xhr.send(file);
+      });
+      if(!yt?.id)throw new Error('YouTube 沒有回傳影片編號');
+      setProgress(90);setMessage('影片已上傳，正在套用縮圖與播放清單…');
+      const actualPrivacy=(yt?.status?.privacyStatus||privacy) as Privacy;
+      try{await api('/api/videos',{method:'POST',body:JSON.stringify({youtubeVideoId:yt.id,title,description,youtubePrivacy:actualPrivacy,appVisibility:'owner',originalFilename:file.name,fileSize:file.size})});}catch{/* YouTube 已成功，上傳紀錄可由同步補回 */}
+      if(thumbnail){
+        const response=await fetch(`/api/youtube/studio/thumbnail/${encodeURIComponent(yt.id)}`,{method:'POST',headers:{'content-type':thumbnail.type||'application/octet-stream'},body:thumbnail});
+        if(!response.ok){const data:any=await response.json().catch(()=>({}));throw new Error(data.error||'縮圖設定失敗');}
+      }
+      setProgress(94);
+      if(ytSelected.length){
+        const numericPositions:Record<string,number>={};
+        for(const id of ytSelected){const n=Number(positions[id]);if(Number.isInteger(n)&&n>=0)numericPositions[id]=n;}
+        await api('/api/youtube/studio/playlists',{method:'POST',body:JSON.stringify({youtubeVideoId:yt.id,playlistIds:ytSelected,positions:numericPositions})});
+      }
+      setProgress(97);
+      for(const playlistId of boxSelected){
+        await api(`/api/playlists/${encodeURIComponent(playlistId)}/items`,{method:'POST',body:JSON.stringify({youtubeVideoId:yt.id,title,thumbnailUrl:`https://i.ytimg.com/vi/${encodeURIComponent(yt.id)}/hqdefault.jpg`})});
+      }
+      setProgress(100);
+      setMessage(actualPrivacy==='private'&&privacy!=='private'?'上傳完成。YouTube 最終將影片設為私人。':'上傳完成，YouTube 與播放清單設定已同步。');
+      setFile(null);setThumbnail(null);setTitle('');setDescription('');setPrivacy('unlisted');setRecordingDate(today());setCategoryId('27');setTagsText('');setSynthetic(false);setYtSelected([]);setBoxSelected([]);setPositions({});setLocalized({});onDone();
+    }catch(e){setMessage(e instanceof Error?e.message:'上傳失敗');}
+    finally{setBusy(false);}
+  };
+
+  return <section className="page studio-page">
+    <div className="page-head"><div><span className="eyebrow">YouTube Upload Studio</span><h1>上傳影片</h1><p>常用設定直接完成，需要時再打開進階。</p></div></div>
+    <div className="studio-layout">
+      <div className="studio-media">
+        <label className={`dropzone studio-drop ${file?'has-file':''}`}><input type="file" accept="video/*" onChange={e=>{const f=e.target.files?.[0]||null;setFile(f);if(f&&!title)setTitle(f.name.replace(/\.[^.]+$/,''));}}/><span className="upload-symbol">＋</span><b>{file?file.name:'選擇影片'}</b><small>{file?formatBytes(file.size):'手機相簿、檔案或電腦都可以'}</small></label>
+        <label className="thumb-picker"><span>自訂縮圖</span><div className="thumb-preview">{thumbnailPreview?<img src={thumbnailPreview} alt="縮圖預覽"/>:<span>＋ 選擇 JPG / PNG</span>}</div><input type="file" accept="image/jpeg,image/png" onChange={e=>setThumbnail(e.target.files?.[0]||null)}/></label>
+      </div>
+      <div className="form-card studio-form">
+        <label>標題<input value={title} maxLength={100} onChange={e=>setTitle(e.target.value)} placeholder="輸入影片標題"/></label>
+        <label>說明<textarea value={description} maxLength={5000} onChange={e=>setDescription(e.target.value)} placeholder="輸入影片說明"/></label>
+        <div className="studio-two"><label>錄製日期<input type="date" value={recordingDate} onChange={e=>setRecordingDate(e.target.value)}/></label><label>隱私<select value={privacy} onChange={e=>setPrivacy(e.target.value as Privacy)}><option value="unlisted">不公開（預設）</option><option value="private">私人</option><option value="public">公開</option></select></label></div>
+
+        <div className="playlist-pair">
+          <section><h3>YouTube 播放清單</h3>{ytPlaylists.length?<div className="check-list">{ytPlaylists.map(p=><label key={p.id}><input type="checkbox" checked={ytSelected.includes(p.id)} onChange={()=>toggle(ytSelected,p.id,setYtSelected)}/><span>{p.title}<small>{p.itemCount} 支影片</small></span></label>)}</div>:<p className="muted-mini">目前沒有可選的 YouTube 播放清單</p>}</section>
+          <section><h3>繁星視界播放清單</h3>{boxPlaylists.length?<div className="check-list">{boxPlaylists.map(p=><label key={p.id}><input type="checkbox" checked={boxSelected.includes(p.id)} onChange={()=>toggle(boxSelected,p.id,setBoxSelected)}/><span>{p.name}<small>{p.itemCount} 支影片</small></span></label>)}</div>:<p className="muted-mini">目前沒有繁星視界播放清單，可先到「播放清單」建立。</p>}</section>
+        </div>
+        {ytSelected.length>0&&!writeReady&&<div className="notice studio-warning">要直接加入 YouTube 播放清單，需要重新授權一次編輯權限。<button className="btn ghost" type="button" onClick={()=>location.href='/auth/youtube'}>重新授權 YouTube</button></div>}
+
+        <button className="advanced-toggle" type="button" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}><span>進階設定</span><b>{advanced?'收起 −':'展開 ＋'}</b></button>
+        {advanced&&<div className="advanced-panel">
+          <div className="studio-two"><label>分類<select value={categoryId} onChange={e=>setCategoryId(e.target.value)}>{CATEGORY_OPTIONS.map(([id,label])=><option key={id} value={id}>{label}{id==='27'?'（預設）':''}</option>)}</select></label><label>標籤<input value={tagsText} onChange={e=>setTagsText(e.target.value)} placeholder="用逗號分隔，例如：健康,教學"/></label></div>
+          <fieldset><legend>影片語言（中文系預設全選）</legend><div className="language-grid">{CHINESE.map(item=><label key={item.code}><input type="checkbox" checked={languages.includes(item.code)} onChange={()=>toggle(languages,item.code,setLanguages)}/><span>{item.label}</span></label>)}</div><small className="field-help">YouTube 主語言以繁體中文（台灣）儲存；其餘勾選語言建立多語言標題／說明。</small></fieldset>
+          <fieldset><legend>多語言標題／說明</legend>{languages.map(code=>{const name=CHINESE.find(x=>x.code===code)?.label||code;const item=localized[code]||{title,description};return <div className="locale-card" key={code}><b>{name}</b><input value={item.title} onChange={e=>setLocalized(prev=>({...prev,[code]:{title:e.target.value,description:(prev[code]?.description??description)}}))} placeholder={title||'標題'}/><textarea value={item.description} onChange={e=>setLocalized(prev=>({...prev,[code]:{title:(prev[code]?.title??title),description:e.target.value}}))} placeholder={description||'說明'}/></div>})}</fieldset>
+          <label className="toggle-row"><input type="checkbox" checked={synthetic} onChange={e=>setSynthetic(e.target.checked)}/><span><b>含 AI／合成或變造內容</b><small>勾選後會向 YouTube 提交合成媒體聲明。</small></span></label>
+          <fieldset><legend>加入／移出播放清單、播放清單內排序</legend><p className="field-help">上方勾選代表加入，取消勾選代表這次不上傳到該清單。YouTube 播放清單可指定位置；0 代表最前面。</p>{ytSelected.length?<div className="position-list">{ytSelected.map(id=>{const p=ytPlaylists.find(x=>x.id===id);return <label key={id}><span>{p?.title||id}</span><input type="number" min="0" step="1" value={positions[id]||''} onChange={e=>setPositions(prev=>({...prev,[id]:e.target.value}))} placeholder="留空＝加到最後"/></label>})}</div>:<p className="muted-mini">尚未選擇 YouTube 播放清單。</p>}</fieldset>
+        </div>}
+
+        <div className="notice">上傳前請確認你有權使用影片內容。開始上傳即表示你同意 <a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube 服務條款</a>、<a href="/terms">Box Starry 使用條款</a>與<a href="/privacy">隱私權政策</a>。</div>
+        {!me.youtubeConnected&&<div className="notice">尚未連接 YouTube。第一次使用只要授權一次。</div>}
+        {busy&&<div className="progress"><span style={{width:`${progress}%`}}/></div>}
+        {message&&<p className="form-message">{message}</p>}
+        <button className="btn primary wide" disabled={busy||!file} onClick={upload}>{busy?`上傳中 ${progress}%`:me.youtubeConnected?'開始上傳到 YouTube':'先連接 YouTube'}</button>
+      </div>
+    </div>
+  </section>;
+}

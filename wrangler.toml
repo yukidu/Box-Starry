@@ -1,5 +1,5 @@
 name = "box-starry"
-main = "worker/youtubeLibraryRouter.ts"
+main = "worker/studioRouter.ts"
 compatibility_date = "2026-10-01"
 workers_dev = true
 
