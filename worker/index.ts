@@ -1,7 +1,7 @@
 import type { Env, LocalUser } from './types';
 import { centralRank, currentUser, finishStarryAuth, logout, startStarryAuth } from './auth';
-import { finishYoutubeAuth, startYoutubeAuth, youtubeConnected, createUploadSession } from './youtube';
-import { cleanText, hashPassword, isoOrNull, json, randomToken, sha256, verifyPassword } from './security';
+import { finishYoutubeAuth, startYoutubeAuth, youtubeConnected, createUploadSession, disconnectYoutube } from './youtube';
+import { cleanText, clearSessionCookie, hashPassword, isoOrNull, json, randomToken, sha256, verifyPassword } from './security';
 
 interface VideoRow {
   id: string;
@@ -164,6 +164,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     return json({ connected: await youtubeConnected(env, user.id), configured: Boolean(env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET) });
   }
   if (path === '/api/youtube/upload-session' && request.method === 'POST') return createUploadSession(request, env, user);
+  if (path === '/api/youtube/disconnect' && request.method === 'POST') {
+    const result = await disconnectYoutube(env, user.id);
+    return json({ ok: true, youtubeAuthorizationRevoked: result.revoked });
+  }
+
+  if (path === '/api/account' && request.method === 'DELETE') {
+    const revoke = await disconnectYoutube(env, user.id).catch(() => ({ revoked: false }));
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM share_links WHERE owner_user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM videos WHERE owner_user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM starry_identities WHERE local_user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM users WHERE id=?').bind(user.id)
+    ]);
+    return json({
+      ok: true,
+      youtubeAuthorizationRevoked: revoke.revoked,
+      note: '已刪除 Box Starry 專屬資料；Starry ID 與 YouTube 原始影片不受影響'
+    }, 200, { 'set-cookie': clearSessionCookie() });
+  }
 
   if (path === '/api/videos' && request.method === 'GET') return json({ videos: (await listOwnVideos(env, user.id)).map(publicVideo) });
 
@@ -196,7 +216,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       const body = await request.json().catch(() => ({})) as Record<string, unknown>;
       const visibility = body.appVisibility === 'public' ? 'public' : 'owner';
       if (visibility === 'public' && video.youtube_privacy === 'private') {
-        return json({ error: 'YouTube 私人影片不能設為公開訪客可看；請重新上傳為「不公開」影片' }, 409);
+        return json({ error: 'YouTube 私人影片不能設為公開訪客可看；請重新上傳為「不公開」或「公開」影片' }, 409);
       }
       await env.DB.prepare('UPDATE videos SET app_visibility=?,updated_at=datetime(\'now\') WHERE id=? AND owner_user_id=?')
         .bind(visibility, video.id, user.id).run();
@@ -212,7 +232,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   if (shareCreate && request.method === 'POST') {
     const video = await videoOwned(env, user.id, shareCreate[1]);
     if (!video) return json({ error: '找不到影片' }, 404);
-    if (video.youtube_privacy === 'private') return json({ error: 'YouTube 私人影片無法建立訪客分享連結；請使用「不公開」上傳模式' }, 409);
+    if (video.youtube_privacy === 'private') return json({ error: 'YouTube 私人影片無法建立訪客分享連結；請使用「不公開」或「公開」上傳模式' }, 409);
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const password = cleanText(body.password, 200);
     const expiresAt = isoOrNull(body.expiresAt);
