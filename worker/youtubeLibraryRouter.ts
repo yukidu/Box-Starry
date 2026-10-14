@@ -1,7 +1,7 @@
 import baseWorker from './index';
 import type { Env } from './types';
 import { currentUser } from './auth';
-import { cleanText, decryptSecret, encryptSecret, json, sha256 } from './security';
+import { cleanText, json, sha256 } from './security';
 import { listYoutubeLibraryPage } from './youtube';
 import { handleBoxPlaylists, listYoutubePlaylists } from './playlists';
 
@@ -14,12 +14,6 @@ interface BoxVideoRow {
   created_at: string;
 }
 
-interface PlaybackGrant {
-  v: string;
-  s: string;
-  e: number;
-}
-
 interface PlaybackRow {
   disabled_at: string | null;
   expires_at: string | null;
@@ -27,12 +21,6 @@ interface PlaybackRow {
   expire_after_first_open_days: number | null;
   youtube_video_id: string;
   youtube_privacy: 'private' | 'unlisted' | 'public';
-}
-
-const PLAYBACK_TTL_MS = 5 * 60 * 1000;
-
-function playbackSecret(env: Env): string | null {
-  return env.YOUTUBE_TOKEN_ENCRYPTION_KEY ? `box-starry-playback-v1:${env.YOUTUBE_TOKEN_ENCRYPTION_KEY}` : null;
 }
 
 function playbackExpired(row: PlaybackRow): boolean {
@@ -46,60 +34,39 @@ function playbackExpired(row: PlaybackRow): boolean {
   return false;
 }
 
-async function hardenPublicShare(request: Request, env: Env, response: Response): Promise<Response> {
+async function hardenPublicShare(request: Request, response: Response): Promise<Response> {
   if (!response.ok) return response;
   const data = await response.json().catch(() => null) as any;
   const youtubeVideoId = cleanText(data?.video?.youtubeVideoId, 32);
   if (!/^[A-Za-z0-9_-]{6,32}$/.test(youtubeVideoId)) return json({ error: '播放來源無法驗證' }, 502);
 
-  const secret = playbackSecret(env);
-  if (!secret) return json({ error: '安全播放憑證尚未設定，請稍後再試' }, 503);
-
   const shareToken = new URL(request.url).pathname.match(/^\/api\/public\/share\/([A-Za-z0-9_-]{20,})$/)?.[1] || '';
   if (!shareToken) return json({ error: '分享連結格式不正確' }, 400);
 
-  const expiresAt = Date.now() + PLAYBACK_TTL_MS;
-  const grant: PlaybackGrant = { v: youtubeVideoId, s: await sha256(shareToken), e: expiresAt };
-  const encrypted = await encryptSecret(JSON.stringify(grant), secret);
   const safeVideo = { ...data.video };
   delete safeVideo.youtubeVideoId;
 
   return json({
     ...data,
     video: safeVideo,
-    playbackUrl: `/api/public/playback/${encrypted.iv}.${encrypted.ciphertext}`,
-    playbackExpiresAt: new Date(expiresAt).toISOString(),
+    playbackUrl: `/api/public/playback/${shareToken}`,
     sourceProtected: true
   });
 }
 
 async function protectedPlayback(request: Request, env: Env): Promise<Response> {
-  const secret = playbackSecret(env);
-  if (!secret) return new Response('播放保護尚未設定', { status: 503 });
+  const shareToken = new URL(request.url).pathname.match(/^\/api\/public\/playback\/([A-Za-z0-9_-]{20,})$/)?.[1] || '';
+  if (!shareToken) return new Response('播放代碼格式不正確', { status: 400 });
 
-  const match = new URL(request.url).pathname.match(/^\/api\/public\/playback\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
-  if (!match) return new Response('播放憑證格式不正確', { status: 400 });
-
-  let grant: PlaybackGrant;
-  try {
-    const plain = await decryptSecret(match[2], match[1], secret);
-    grant = JSON.parse(plain) as PlaybackGrant;
-  } catch {
-    return new Response('播放憑證無效', { status: 410 });
-  }
-
-  if (!grant || !/^[A-Za-z0-9_-]{6,32}$/.test(grant.v) || !/^[a-f0-9]{64}$/.test(grant.s) || !Number.isFinite(grant.e) || grant.e <= Date.now()) {
-    return new Response('播放憑證已失效', { status: 410 });
-  }
-
+  const tokenHash = await sha256(shareToken);
   const row = await env.DB.prepare(`
     SELECT s.disabled_at,s.expires_at,s.first_opened_at,s.expire_after_first_open_days,
            v.youtube_video_id,v.youtube_privacy
     FROM share_links s JOIN videos v ON v.id=s.video_id
     WHERE s.token_hash=? LIMIT 1
-  `).bind(grant.s).first<PlaybackRow>();
+  `).bind(tokenHash).first<PlaybackRow>();
 
-  if (!row || playbackExpired(row) || row.youtube_privacy === 'private' || row.youtube_video_id !== grant.v) {
+  if (!row || playbackExpired(row) || row.youtube_privacy === 'private') {
     return new Response('這個分享已失效', { status: 410 });
   }
 
@@ -107,7 +74,7 @@ async function protectedPlayback(request: Request, env: Env): Promise<Response> 
   const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>繁星膠囊播放</title><style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe src="https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&playsinline=1" title="繁星膠囊影片" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="no-referrer"></iframe></body></html>`;
   const headers = new Headers({
     'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store',
+    'cache-control': 'private, max-age=60',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'x-frame-options': 'SAMEORIGIN',
@@ -207,9 +174,9 @@ async function cleanupYoutubeCache(request: Request, env: Env) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/public/playback/') && request.method === 'GET') return protectedPlayback(request, env);
+    if (/^\/api\/public\/playback\/[A-Za-z0-9_-]{20,}$/.test(url.pathname) && request.method === 'GET') return protectedPlayback(request, env);
     if (/^\/api\/public\/share\/[A-Za-z0-9_-]{20,}$/.test(url.pathname) && request.method === 'POST') {
-      return hardenPublicShare(request, env, await baseWorker.fetch(request, env));
+      return hardenPublicShare(request, await baseWorker.fetch(request, env));
     }
     if (url.pathname === '/api/youtube/library' && request.method === 'GET') return library(request, env);
     if (url.pathname === '/api/youtube/playlists' && request.method === 'GET') {
