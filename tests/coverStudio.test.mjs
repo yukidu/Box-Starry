@@ -33,10 +33,17 @@ test('upload page uses the selected cover for YouTube thumbnail upload', () => {
   assert.match(upload, /\/api\/youtube\/studio\/thumbnail/);
 });
 
-test('Workers AI is bound and uses Cloudflare hosted FLUX model', () => {
+test('Workers AI is bound and uses FLUX.2 dev with smart title understanding', () => {
   assert.match(wrangler, /\[ai\]/);
   assert.match(wrangler, /binding = "AI"/);
   assert.match(types, /WorkersAILike/);
-  assert.match(studioWorker, /@cf\/black-forest-labs\/flux-1-schnell/);
-  assert.match(studioWorker, /steps: 4/);
+  assert.match(types, /response\?: string/);
+  assert.match(studioWorker, /@cf\/qwen\/qwen3-30b-a3b-fp8/);
+  assert.match(studioWorker, /@cf\/black-forest-labs\/flux-2-dev/);
+  assert.match(studioWorker, /buildSmartCoverPrompt/);
+  assert.match(studioWorker, /multipart/);
+  assert.match(studioWorker, /form\.append\('width', '1280'\)/);
+  assert.match(studioWorker, /form\.append\('height', '720'\)/);
+  assert.match(studioWorker, /form\.append\('steps', '20'\)/);
+  assert.doesNotMatch(studioWorker, /flux-1-schnell/);
 });
