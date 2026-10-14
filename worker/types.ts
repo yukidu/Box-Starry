@@ -18,12 +18,13 @@ export interface FetcherLike {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
-export interface WorkersAIImageResult {
+export interface WorkersAIResult {
   image?: string;
+  response?: string;
 }
 
 export interface WorkersAILike {
-  run(model: string, input: Record<string, unknown>): Promise<WorkersAIImageResult>;
+  run(model: string, input: Record<string, unknown>): Promise<WorkersAIResult>;
 }
 
 export interface Env {
