@@ -4,7 +4,6 @@ import { api } from './api';
 type ShareData = {
   video: { title:string; description:string };
   playbackUrl: string;
-  playbackExpiresAt: string;
   sourceProtected: boolean;
 };
 
