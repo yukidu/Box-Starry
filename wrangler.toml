@@ -19,4 +19,8 @@ binding = "STARRY_ID_DB"
 database_name = "starry_id_db"
 database_id = "01195c92-555e-4816-bddc-5b8cb2e795db"
 
-# 正式自訂網域依《Starry繁星生態系專案總覽表》規則，在確認後才加入，避免猜測網址。
+[vars]
+YOUTUBE_CLIENT_ID = "798843680414-rt8bh32bbqe9tr7koi96avub347us89b.apps.googleusercontent.com"
+
+# YOUTUBE_CLIENT_SECRET 與 YOUTUBE_TOKEN_ENCRYPTION_KEY 必須使用 Cloudflare Secrets，不能寫入 GitHub。
+# 正式自訂網域依《Starry繁星生態系專案總覽表》規則，在確認後才加入。
