@@ -1,8 +1,9 @@
 import baseWorker from './index';
 import type { Env } from './types';
 import { currentUser } from './auth';
-import { json } from './security';
-import { handleBoxPlaylists } from './playlists';
+import { cleanText, json } from './security';
+import { listYoutubeLibraryPage } from './youtube';
+import { handleBoxPlaylists, listYoutubePlaylists } from './playlists';
 import { syncYoutubePlaylistsCached, syncYoutubeVideosCached } from './youtubeSyncCache';
 
 interface BoxVideoRow {
@@ -14,11 +15,35 @@ interface BoxVideoRow {
   created_at: string;
 }
 
+type VideoSyncResult = {
+  videos: Awaited<ReturnType<typeof listYoutubeLibraryPage>>['videos'];
+  nextPageToken: string | null;
+  mode: 'cache' | 'incremental' | 'full' | 'fallback';
+};
+
+async function loadVideosWithFallback(request: Request, env: Env, userId: string): Promise<VideoSyncResult> {
+  const pageToken = cleanText(new URL(request.url).searchParams.get('pageToken'), 512);
+  if (pageToken) {
+    const page = await listYoutubeLibraryPage(env, userId, pageToken);
+    return { videos: page.videos, nextPageToken: page.nextPageToken, mode: 'fallback' };
+  }
+  try {
+    const synced = await syncYoutubeVideosCached(env, userId);
+    return { videos: synced.videos, nextPageToken: null, mode: synced.mode };
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'unknown';
+    if (code === 'youtube_reconnect_required' || code === 'youtube_not_connected') throw error;
+    console.warn('Incremental YouTube video sync failed; falling back to direct YouTube read', code);
+    const page = await listYoutubeLibraryPage(env, userId, '');
+    return { videos: page.videos, nextPageToken: page.nextPageToken, mode: 'fallback' };
+  }
+}
+
 async function library(request: Request, env: Env): Promise<Response> {
   const user = await currentUser(request, env);
   if (!user) return json({ error: '請先登入 Starry ID' }, 401);
   try {
-    const synced = await syncYoutubeVideosCached(env, user.id);
+    const synced = await loadVideosWithFallback(request, env, user.id);
     const rows = await env.DB.prepare(`
       SELECT id,youtube_video_id,app_visibility,original_filename,file_size,created_at
       FROM videos WHERE owner_user_id=?
@@ -65,7 +90,7 @@ async function library(request: Request, env: Env): Promise<Response> {
           } : null
         };
       }),
-      nextPageToken: null,
+      nextPageToken: synced.nextPageToken,
       syncMode: synced.mode
     });
   } catch (error) {
@@ -90,11 +115,15 @@ async function cleanupPlaylistsBeforeAccountDelete(request: Request, env: Env) {
 async function cleanupYoutubeCache(request: Request, env: Env) {
   const user = await currentUser(request, env);
   if (!user) return;
-  await env.DB.batch([
-    env.DB.prepare('DELETE FROM youtube_video_cache WHERE user_id=?').bind(user.id),
-    env.DB.prepare('DELETE FROM youtube_playlist_cache WHERE user_id=?').bind(user.id),
-    env.DB.prepare('DELETE FROM youtube_sync_state WHERE user_id=?').bind(user.id)
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM youtube_video_cache WHERE user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM youtube_playlist_cache WHERE user_id=?').bind(user.id),
+      env.DB.prepare('DELETE FROM youtube_sync_state WHERE user_id=?').bind(user.id)
+    ]);
+  } catch (error) {
+    console.warn('YouTube cache cleanup skipped', error instanceof Error ? error.message : 'unknown');
+  }
 }
 
 export default {
@@ -104,7 +133,12 @@ export default {
     if (url.pathname === '/api/youtube/playlists' && request.method === 'GET') {
       const user = await currentUser(request, env);
       if (!user) return json({ error: '請先登入 Starry ID' }, 401);
-      return syncYoutubePlaylistsCached(request, env, user);
+      try {
+        return await syncYoutubePlaylistsCached(request, env, user);
+      } catch (error) {
+        console.warn('Incremental YouTube playlist sync failed; falling back to direct YouTube read', error instanceof Error ? error.message : 'unknown');
+        return listYoutubePlaylists(request, env, user);
+      }
     }
     if (url.pathname === '/api/playlists' || url.pathname.startsWith('/api/playlists/')) {
       const user = await currentUser(request, env);
