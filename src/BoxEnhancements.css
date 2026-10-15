@@ -1,0 +1,4 @@
+.yt-gear-menu a[href*="studio.youtube.com/video/"]>span:first-child{font-size:0}
+.yt-gear-menu a[href*="studio.youtube.com/video/"]>span:first-child::after{content:'✎';font-size:16px}
+.yt-gear-menu a[href*="studio.youtube.com/video/"] small{font-size:0}
+.yt-gear-menu a[href*="studio.youtube.com/video/"] small::after{content:'在 Box 影片詳細編輯頁修改';font-size:10px}
