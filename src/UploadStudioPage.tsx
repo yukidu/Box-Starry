@@ -9,6 +9,7 @@ type Me = { user: { id:string } | null; youtubeConnected:boolean };
 type YoutubePlaylist = { id:string; title:string; itemCount:number; privacy:string };
 type BoxPlaylist = { id:string; name:string; itemCount:number };
 type Privacy = 'private'|'unlisted'|'public';
+type LongUploadsStatus = 'allowed'|'eligible'|'disallowed'|'unknown';
 type Props = { me:Me; onDone:()=>void };
 
 const CHINESE = [
@@ -22,10 +23,22 @@ const CHINESE = [
 const CATEGORY_OPTIONS = [
   ['27','教育'],['22','人物與網誌'],['28','科學與科技'],['26','操作說明與風格'],['24','娛樂']
 ];
+const YOUTUBE_VERIFY_URL='https://www.youtube.com/verify';
 
 function today(){const d=new Date();const offset=d.getTimezoneOffset()*60000;return new Date(d.getTime()-offset).toISOString().slice(0,10);}
 function formatBytes(value:number){if(!value)return '';const units=['B','KB','MB','GB'];let n=value,i=0;while(n>=1024&&i<3){n/=1024;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`;}
 function go(path:string){history.pushState({},'',path);window.dispatchEvent(new PopStateEvent('popstate'));}
+function readVideoDuration(file:File):Promise<number>{
+  return new Promise(resolve=>{
+    const url=URL.createObjectURL(file);
+    const video=document.createElement('video');
+    const done=(value:number)=>{URL.revokeObjectURL(url);video.removeAttribute('src');resolve(value);};
+    video.preload='metadata';
+    video.onloadedmetadata=()=>done(Number.isFinite(video.duration)?video.duration:0);
+    video.onerror=()=>done(0);
+    video.src=url;
+  });
+}
 
 async function loadYoutubePlaylists(){
   const all:YoutubePlaylist[]=[];let token='';let rounds=0;
@@ -59,17 +72,34 @@ export default function UploadStudioPage({me,onDone}:Props){
   const [creatingBox,setCreatingBox]=useState(false);
   const [playlistMessage,setPlaylistMessage]=useState('');
   const [writeReady,setWriteReady]=useState(true);
+  const [longUploadsStatus,setLongUploadsStatus]=useState<LongUploadsStatus>('unknown');
+  const [verificationNeeded,setVerificationNeeded]=useState(false);
+  const [videoDurationSeconds,setVideoDurationSeconds]=useState(0);
   const [progress,setProgress]=useState(0);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const [dragging,setDragging]=useState(false);
+
+  const refreshYoutubeStatus=async()=>{
+    try{
+      const data=await api<{writeReady:boolean;longUploadsStatus?:LongUploadsStatus;needsPhoneVerification?:boolean}>('/api/youtube/studio/status');
+      setWriteReady(data.writeReady);
+      const next=data.longUploadsStatus||'unknown';
+      setLongUploadsStatus(next);
+      if(next==='allowed')setVerificationNeeded(false);
+      else if(data.needsPhoneVerification)setVerificationNeeded(true);
+    }catch{
+      setWriteReady(false);
+      setLongUploadsStatus('unknown');
+    }
+  };
 
   useEffect(()=>{
     if(!me.user||!me.youtubeConnected)return;
     void Promise.all([
       loadYoutubePlaylists().then(setYtPlaylists).catch(()=>setYtPlaylists([])),
       api<{playlists:BoxPlaylist[]}>('/api/playlists').then(x=>setBoxPlaylists(x.playlists)).catch(()=>setBoxPlaylists([])),
-      api<{writeReady:boolean}>('/api/youtube/studio/status').then(x=>setWriteReady(x.writeReady)).catch(()=>setWriteReady(false))
+      refreshYoutubeStatus()
     ]);
   },[me.user?.id,me.youtubeConnected]);
 
@@ -103,7 +133,9 @@ export default function UploadStudioPage({me,onDone}:Props){
     if(!isVideo){setMessage('請拖曳影片檔案');return;}
     setFile(next);
     setThumbnail(null);
+    setVideoDurationSeconds(0);
     setMessage('');
+    void readVideoDuration(next).then(setVideoDurationSeconds);
     if(!title)setTitle(next.name.replace(/\.[^.]+$/,''));
   };
 
@@ -130,6 +162,16 @@ export default function UploadStudioPage({me,onDone}:Props){
     if(!title.trim()){setMessage('請輸入影片名稱');return;}
     if(!me.youtubeConnected){go('/youtube');return;}
     if(ytSelected.length&&!writeReady){setMessage('YouTube 播放清單需要重新授權一次編輯權限。');return;}
+    const isLongVideo=videoDurationSeconds>15*60;
+    if((thumbnail||isLongVideo)&&longUploadsStatus==='eligible'){
+      setVerificationNeeded(true);
+      setMessage(isLongVideo?'這支影片超過 15 分鐘，請先完成 YouTube 電話驗證並開啟中階功能。':'自訂縮圖需要先完成 YouTube 電話驗證並開啟中階功能。');
+      return;
+    }
+    if(isLongVideo&&longUploadsStatus==='disallowed'){
+      setMessage('這個 YouTube 頻道目前不允許上傳超過 15 分鐘的影片，請先到 YouTube Studio 檢查「功能使用資格」。');
+      return;
+    }
     setBusy(true);setProgress(1);setMessage('正在建立 YouTube 上傳工作…');
     try{
       const tags=tagsText.split(',').map(x=>x.trim()).filter(Boolean);
@@ -146,7 +188,11 @@ export default function UploadStudioPage({me,onDone}:Props){
       try{await api('/api/videos',{method:'POST',body:JSON.stringify({youtubeVideoId:yt.id,title,description,youtubePrivacy:actualPrivacy,appVisibility:'owner',originalFilename:file.name,fileSize:file.size})});}catch{/* YouTube 已成功，上傳紀錄可由同步補回 */}
       if(thumbnail){
         const response=await fetch(`/api/youtube/studio/thumbnail/${encodeURIComponent(yt.id)}`,{method:'POST',headers:{'content-type':thumbnail.type||'application/octet-stream'},body:thumbnail});
-        if(!response.ok){const data:any=await response.json().catch(()=>({}));throw new Error(data.error||'縮圖設定失敗');}
+        if(!response.ok){
+          const data:any=await response.json().catch(()=>({}));
+          if(data.code==='youtube_thumbnail_not_allowed')setVerificationNeeded(true);
+          throw new Error(data.error||'縮圖設定失敗');
+        }
       }
       setProgress(94);
       if(ytSelected.length){
@@ -160,7 +206,7 @@ export default function UploadStudioPage({me,onDone}:Props){
       }
       setProgress(100);
       setMessage(actualPrivacy==='private'&&privacy!=='private'?'上傳完成。YouTube 最終將影片設為私人。':'上傳完成，YouTube 與播放清單設定已同步。');
-      setFile(null);setThumbnail(null);setTitle('');setDescription('');setPrivacy('unlisted');setRecordingDate(today());setCategoryId('27');setTagsText('');setSynthetic(false);setYtSelected([]);setBoxSelected([]);setPositions({});setLocalized({});onDone();
+      setFile(null);setThumbnail(null);setVideoDurationSeconds(0);setTitle('');setDescription('');setPrivacy('unlisted');setRecordingDate(today());setCategoryId('27');setTagsText('');setSynthetic(false);setYtSelected([]);setBoxSelected([]);setPositions({});setLocalized({});onDone();
     }catch(e){setMessage(e instanceof Error?e.message:'上傳失敗');}
     finally{setBusy(false);}
   };
@@ -212,6 +258,8 @@ export default function UploadStudioPage({me,onDone}:Props){
           <fieldset><legend>加入／移出播放清單、播放清單內排序</legend><p className="field-help">上方勾選代表加入，取消勾選代表這次不上傳到該清單。YouTube 播放清單可指定位置；0 代表最前面。</p>{ytSelected.length?<div className="position-list">{ytSelected.map(id=>{const p=ytPlaylists.find(x=>x.id===id);return <label key={id}><span>{p?.title||id}</span><input type="number" min="0" step="1" value={positions[id]||''} onChange={e=>setPositions(prev=>({...prev,[id]:e.target.value}))} placeholder="留空＝加到最後"/></label>})}</div>:<p className="muted-mini">尚未選擇 YouTube 播放清單。</p>}</fieldset>
         </div>}
 
+        {(longUploadsStatus==='eligible'||verificationNeeded)&&<div className="notice studio-warning"><b>YouTube 中階功能尚未完成</b><br/>完成一次電話驗證後，即可使用自訂縮圖與上傳超過 15 分鐘的影片。驗證由 YouTube 官方完成，Box Starry 會直接帶你前往。<div><button className="btn ghost" type="button" onClick={()=>window.open(YOUTUBE_VERIFY_URL,'_blank','noopener,noreferrer')}>立即驗證 YouTube</button> <button className="btn ghost" type="button" onClick={()=>void refreshYoutubeStatus()}>已完成，重新檢查</button></div></div>}
+        {longUploadsStatus==='disallowed'&&<div className="notice studio-warning">這個 YouTube 頻道目前不允許上傳超過 15 分鐘的影片。請先到 YouTube Studio 的「功能使用資格」檢查頻道狀態。</div>}
         <div className="notice">上傳前請確認你有權使用影片內容。開始上傳即表示你同意 <a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube 服務條款</a>、<a href="/terms">Box Starry 使用條款</a>與<a href="/privacy">隱私權政策</a>。</div>
         {!me.youtubeConnected&&<div className="notice">尚未連接 YouTube。第一次使用只要授權一次。</div>}
         {busy&&<div className="progress"><span style={{width:`${progress}%`}}/></div>}
