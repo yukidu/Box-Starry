@@ -8,15 +8,17 @@ const studioWorker = readFileSync(new URL('../worker/youtubeStudio.ts', import.m
 const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 const types = readFileSync(new URL('../worker/types.ts', import.meta.url), 'utf8');
 
-test('AI cover generation is the first cover method and shows both editable fields', () => {
+test('AI cover generation is the first cover method and shows editable title fields plus exclusions', () => {
   const aiIndex = cover.indexOf('Cloudflare AI 自動生圖');
   const timelineIndex = cover.indexOf('拖曳影片時間軸抓圖');
   assert.ok(aiIndex >= 0 && timelineIndex > aiIndex);
   assert.match(cover, /<span>1<\/span><div><b>Cloudflare AI 自動生圖/);
   assert.match(cover, /影片標題/);
   assert.match(cover, /封面標題文字/);
-  assert.match(cover, /aiVideoTitle/);
-  assert.match(cover, /coverTitleText/);
+  assert.match(cover, /不要納入生圖/);
+  assert.match(cover, /DEFAULT_EXCLUDE_TEXT = '不要產品圖，不要人物'/);
+  assert.match(cover, /excludeText/);
+  assert.match(cover, /body: JSON\.stringify\(\{ videoTitle, coverTitleText: coverText, excludeText: exclusions \}\)/);
   assert.doesNotMatch(cover, /aiMode/);
   assert.doesNotMatch(cover, /自訂文字與條件/);
 });
@@ -43,7 +45,7 @@ test('upload page uses the selected cover for YouTube thumbnail upload', () => {
   assert.match(upload, /\/api\/youtube\/studio\/thumbnail/);
 });
 
-test('Workers AI uses video title for scene and cover title for visible headline', () => {
+test('Workers AI uses video title, cover headline, and hard exclusions', () => {
   assert.match(wrangler, /\[ai\]/);
   assert.match(wrangler, /binding = "AI"/);
   assert.match(types, /WorkersAILike/);
@@ -53,6 +55,10 @@ test('Workers AI uses video title for scene and cover title for visible headline
   assert.match(studioWorker, /buildSmartCoverPrompt/);
   assert.match(studioWorker, /videoTitle/);
   assert.match(studioWorker, /coverTitleText/);
+  assert.match(studioWorker, /excludeText/);
+  assert.match(studioWorker, /STRICT EXCLUSIONS/);
+  assert.match(studioWorker, /Treat DO NOT INCLUDE as hard negative instructions/);
+  assert.match(studioWorker, /exclusionsApplied/);
   assert.match(studioWorker, /Preserve the wording and language exactly/);
   assert.match(studioWorker, /multipart/);
   assert.match(studioWorker, /form\.append\('width', '1280'\)/);
