@@ -2,12 +2,15 @@ import baseWorker from './youtubeLibraryRouter';
 import type { Env, LocalUser } from './types';
 import { currentUser } from './auth';
 import { cleanText, json } from './security';
-import { youtubeAccessToken } from './youtube';
+import { youtubeAccessToken, youtubeStudioReady } from './youtube';
 import { handleYoutubeStudio } from './youtubeStudio';
 import { handleYoutubeStudioExtended } from './youtubeStudioExtended';
 
 const THUMBNAIL_ROUTE = /^\/api\/youtube\/studio\/thumbnail\/([A-Za-z0-9_-]{6,32})$/;
 const THUMBNAIL_RETRY_DELAYS = [0, 1200, 3000, 6000];
+const YOUTUBE_VERIFY_URL = 'https://www.youtube.com/verify';
+
+type LongUploadsStatus = 'allowed' | 'eligible' | 'disallowed' | 'unknown';
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -26,8 +29,9 @@ function thumbnailErrorResponse(status: number, payload: any): Response {
   }
   if (status === 403) {
     return json({
-      error: 'YouTube 不允許這個頻道設定自訂縮圖。請到 YouTube Studio → 設定 → 頻道 → 功能資格，確認已完成電話驗證並開啟「中階功能」。',
-      code: 'youtube_thumbnail_not_allowed'
+      error: 'YouTube 不允許這個頻道設定自訂縮圖。請完成 YouTube 電話驗證並開啟「中階功能」。',
+      code: 'youtube_thumbnail_not_allowed',
+      verificationUrl: YOUTUBE_VERIFY_URL
     }, 409);
   }
   if (status === 404 || reason === 'videoNotFound') {
@@ -99,12 +103,46 @@ async function setThumbnailDirect(request: Request, env: Env, user: LocalUser, v
   return thumbnailErrorResponse(lastStatus, lastPayload);
 }
 
+async function youtubeIntermediateStatus(env: Env, user: LocalUser): Promise<Response> {
+  const writeReady = await youtubeStudioReady(env, user.id);
+  let longUploadsStatus: LongUploadsStatus = 'unknown';
+
+  try {
+    const token = await youtubeAccessToken(env, user.id);
+    const endpoint = new URL('https://www.googleapis.com/youtube/v3/channels');
+    endpoint.searchParams.set('part', 'status');
+    endpoint.searchParams.set('mine', 'true');
+    const response = await fetch(endpoint.toString(), { headers: { authorization: `Bearer ${token}` } });
+    const payload: any = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const value = cleanText(payload?.items?.[0]?.status?.longUploadsStatus, 32);
+      if (value === 'allowed' || value === 'eligible' || value === 'disallowed') longUploadsStatus = value;
+    } else {
+      console.warn('YouTube channel feature status failed', response.status, payload?.error?.message || 'unknown');
+    }
+  } catch (error) {
+    console.warn('YouTube channel feature status unavailable', error instanceof Error ? error.message : 'unknown');
+  }
+
+  return json({
+    writeReady,
+    longUploadsStatus,
+    canUploadLongVideos: longUploadsStatus === 'allowed',
+    needsPhoneVerification: longUploadsStatus === 'eligible',
+    verificationUrl: YOUTUBE_VERIFY_URL
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/youtube/studio/')) {
       const user = await currentUser(request, env);
       if (!user) return json({ error: '請先登入 Starry ID' }, 401);
+
+      if (url.pathname === '/api/youtube/studio/status' && request.method === 'GET') {
+        return youtubeIntermediateStatus(env, user);
+      }
 
       const thumbnailMatch = url.pathname.match(THUMBNAIL_ROUTE);
       if (thumbnailMatch && request.method === 'POST') {
