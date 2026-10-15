@@ -16,7 +16,10 @@ test('AI cover generation is the first cover method and shows editable title fie
   assert.match(cover, /影片標題/);
   assert.match(cover, /封面標題文字/);
   assert.match(cover, /不要納入生圖/);
-  assert.match(cover, /DEFAULT_EXCLUDE_TEXT = '不要產品圖，不要人物'/);
+  assert.match(cover, /EXCLUDE_PLACEHOLDER = '不要產品圖，不要人物'/);
+  assert.match(cover, /const \[excludeText, setExcludeText\] = useState\(''\)/);
+  assert.match(cover, /placeholder=\{EXCLUDE_PLACEHOLDER\}/);
+  assert.doesNotMatch(cover, /DEFAULT_EXCLUDE_TEXT/);
   assert.match(cover, /excludeText/);
   assert.match(cover, /body: JSON\.stringify\(\{ videoTitle, coverTitleText: coverText, excludeText: exclusions \}\)/);
   assert.doesNotMatch(cover, /aiMode/);
