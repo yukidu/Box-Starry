@@ -1,4 +1,4 @@
-/* 手機效能優化：移除高負載的模糊與持續動畫，保留原本功能與版面。 */
+/* 手機效能優化：保留靜態頂部與選單本體；選單開啟時只對背景套用較輕量的 4px 模糊。 */
 .topbar {
   background: var(--solid) !important;
   backdrop-filter: none !important;
@@ -6,6 +6,8 @@
 }
 
 .menu-panel {
+  position: relative;
+  z-index: 102;
   background: var(--solid) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -16,4 +18,24 @@
   animation: none !important;
   opacity: .55;
   transform: none !important;
+}
+
+/* 漢堡選單開啟：選單保持清晰，其餘全頁模糊＋深色遮罩。 */
+.topbar:has(.hamburger[aria-expanded="true"])::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  background: rgba(15, 23, 42, .8);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+html[data-theme="dark"] .topbar:has(.hamburger[aria-expanded="true"])::before {
+  background: rgba(3, 8, 18, .8);
+}
+
+.topbar:has(.hamburger[aria-expanded="true"]) .menu-wrap {
+  z-index: 101;
 }
