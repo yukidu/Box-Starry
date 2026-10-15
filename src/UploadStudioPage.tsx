@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import CoverStudio from './CoverStudio';
+import { uploadYoutubeFile } from './youtubeUpload';
 import './UploadStudioPage.css';
 
 // 自訂縮圖由 CoverStudio 四合一封面圖工作室提供。
@@ -73,6 +74,17 @@ export default function UploadStudioPage({me,onDone}:Props){
   },[me.user?.id,me.youtubeConnected]);
 
   useEffect(()=>{
+    const created=(event:Event)=>{
+      const playlist=(event as CustomEvent<YoutubePlaylist>).detail;
+      if(!playlist?.id)return;
+      setYtPlaylists(prev=>[playlist,...prev.filter(item=>item.id!==playlist.id)]);
+      setYtSelected(prev=>prev.includes(playlist.id)?prev:[...prev,playlist.id]);
+    };
+    window.addEventListener('box-youtube-playlist-created',created as EventListener);
+    return()=>window.removeEventListener('box-youtube-playlist-created',created as EventListener);
+  },[]);
+
+  useEffect(()=>{
     setLocalized(prev=>{
       const next={...prev};
       for(const code of languages){if(!next[code])next[code]={title,description};}
@@ -127,12 +139,7 @@ export default function UploadStudioPage({me,onDone}:Props){
         title,description,mimeType:file.type||'application/octet-stream',fileSize:file.size,privacy,
         categoryId,defaultLanguage:'zh-TW',recordingDate,tags,containsSyntheticMedia:synthetic,localizations
       })});
-      const yt:any=await new Promise((resolve,reject)=>{
-        const xhr=new XMLHttpRequest();xhr.open('PUT',session.uploadUrl);xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');
-        xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.max(2,Math.round(e.loaded/e.total*88)));};
-        xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){try{resolve(JSON.parse(xhr.responseText))}catch{reject(new Error('YouTube 回傳資料無法讀取'))}}else reject(new Error('YouTube 上傳失敗，請稍後再試'));};
-        xhr.onerror=()=>reject(new Error('網路中斷，請重新上傳'));xhr.send(file);
-      });
+      const yt:any=await uploadYoutubeFile(session.uploadUrl,file,setProgress);
       if(!yt?.id)throw new Error('YouTube 沒有回傳影片編號');
       setProgress(90);setMessage('影片已上傳，正在套用縮圖與播放清單…');
       const actualPrivacy=(yt?.status?.privacyStatus||privacy) as Privacy;

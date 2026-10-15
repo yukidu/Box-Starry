@@ -1,0 +1,10 @@
+.youtube-playlist-creator{max-width:1180px;margin:18px auto 0;border:1px solid var(--line);background:var(--panel);border-radius:20px;padding:14px 16px;box-shadow:var(--shadow);display:grid;grid-template-columns:minmax(220px,.7fr) minmax(0,1.3fr);gap:14px;align-items:center}
+.youtube-playlist-creator.compact{margin:0;grid-template-columns:1fr}
+.yt-create-copy{display:grid;gap:3px;min-width:0}
+.yt-create-copy>b{font-size:15px}
+.yt-create-copy>small,.yt-create-message{font-size:11px;color:var(--muted);line-height:1.45}
+.yt-create-fields{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;align-items:center}
+.yt-create-fields input,.yt-create-fields select{width:100%;min-width:0;border:1px solid var(--line);background:var(--solid);color:var(--text);border-radius:12px;padding:10px 11px;outline:none}
+.yt-create-fields input:focus,.yt-create-fields select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,158,11,.10)}
+.yt-create-message{grid-column:1/-1}
+@media(max-width:760px){.youtube-playlist-creator{margin:12px 12px 0;grid-template-columns:1fr}.yt-create-fields{grid-template-columns:1fr}.yt-create-fields .btn{width:100%}}
