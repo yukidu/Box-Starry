@@ -3,6 +3,9 @@ import { api } from './api';
 import { YoutubeConnectionPage, YoutubeLibraryPage, PrivacyPolicyPage } from './YoutubeLibrary';
 import PlaylistPage from './PlaylistPage';
 import UploadStudioPage from './UploadStudioPage';
+import VideoEditPage from './VideoEditPage';
+import YoutubePlaylistCreator from './YoutubePlaylistCreator';
+import './BoxEnhancements.css';
 
 type User = { id:string; email:string; name:string|null; avatar:string|null; profileSlug:string|null; rank:string|null };
 type Video = { id:string; youtubeVideoId:string; title:string; description:string; youtubePrivacy:'private'|'unlisted'|'public'; appVisibility:'owner'|'public'; uploadStatus:string; originalFilename:string; fileSize:number; thumbnailUrl:string; createdAt:string };
@@ -58,8 +61,21 @@ export default function App(){
   const [path,setPath]=useState(location.pathname);const [me,setMe]=useState<Me>({user:null,youtubeConnected:false});const [confirm,setConfirm]=useState<ConfirmState>(null);const [toast,setToast]=useState('');
   const refresh=()=>api<Me>('/api/me').then(setMe).catch(()=>setMe({user:null,youtubeConnected:false}));
   useEffect(()=>{refresh();const p=()=>setPath(location.pathname);addEventListener('popstate',p);const t=(e:any)=>{setToast(e.detail);setTimeout(()=>setToast(''),3500)};addEventListener('box-toast',t);return()=>{removeEventListener('popstate',p);removeEventListener('box-toast',t)}},[]);
-  const publicRoute=path.match(/^\/u\/([^/]+)$/);const shareRoute=path.match(/^\/s\/([A-Za-z0-9_-]+)$/);
+  useEffect(()=>{
+    const openInsideBox=(event:MouseEvent)=>{
+      const target=event.target instanceof Element?event.target:null;
+      const link=target?.closest('.yt-gear-menu a[href*="studio.youtube.com/video/"]') as HTMLAnchorElement|null;
+      if(!link)return;
+      const match=link.href.match(/studio\.youtube\.com\/video\/([^/]+)\/edit/);
+      if(!match)return;
+      event.preventDefault();
+      go(`/videos/${encodeURIComponent(decodeURIComponent(match[1]))}/edit`);
+    };
+    document.addEventListener('click',openInsideBox);
+    return()=>document.removeEventListener('click',openInsideBox);
+  },[]);
+  const publicRoute=path.match(/^\/u\/([^/]+)$/);const shareRoute=path.match(/^\/s\/([A-Za-z0-9_-]+)$/);const editRoute=path.match(/^\/videos\/([A-Za-z0-9_-]{6,32})\/edit$/);
   if(publicRoute)return <PublicMemberPage slug={decodeURIComponent(publicRoute[1])}/>;if(shareRoute)return <SharePage token={shareRoute[1]}/>;
-  let page:React.ReactNode;if(path==='/videos')page=<YoutubeLibraryPage me={me} confirm={setConfirm}/>;else if(path==='/playlists')page=<PlaylistPage me={me}/>;else if(path==='/shares')page=<SharesPage me={me} confirm={setConfirm}/>;else if(path==='/youtube')page=<YoutubeConnectionPage me={me} onRefresh={refresh} confirm={setConfirm}/>;else if(path==='/privacy')page=<PrivacyPolicyPage/>;else if(path==='/terms')page=<TermsPage/>;else if(path==='/install')page=<InstallPage/>;else page=<UploadStudioPage me={me} onDone={refresh}/>;
+  let page:React.ReactNode;if(editRoute)page=<VideoEditPage me={me} videoId={editRoute[1]}/>;else if(path==='/videos')page=<YoutubeLibraryPage me={me} confirm={setConfirm}/>;else if(path==='/playlists')page=<PlaylistPage me={me}/>;else if(path==='/shares')page=<SharesPage me={me} confirm={setConfirm}/>;else if(path==='/youtube')page=<YoutubeConnectionPage me={me} onRefresh={refresh} confirm={setConfirm}/>;else if(path==='/privacy')page=<PrivacyPolicyPage/>;else if(path==='/terms')page=<TermsPage/>;else if(path==='/install')page=<InstallPage/>;else page=<><YoutubePlaylistCreator enabled={Boolean(me.user&&me.youtubeConnected)}/><UploadStudioPage me={me} onDone={refresh}/></>;
   return <><Navbar me={me} onRefresh={refresh}/><main>{page}</main><ConfirmModal state={confirm} onClose={()=>setConfirm(null)}/>{toast&&<div className="toast">{toast}</div>}<footer><span>繁星 Starry.phd 生態系</span><span>Box Starry · 私人影片膠囊 · <a href="/privacy">隱私權政策</a> · <a href="/terms">使用條款</a></span></footer></>;
 }
