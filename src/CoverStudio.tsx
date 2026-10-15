@@ -12,6 +12,7 @@ type Props = {
 
 const COVER_WIDTH = 1280;
 const COVER_HEIGHT = 720;
+const DEFAULT_EXCLUDE_TEXT = '不要產品圖，不要人物';
 
 function waitFor(video: HTMLVideoElement, event: 'loadedmetadata' | 'seeked'): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -114,6 +115,7 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   const [aiVideoTitle, setAiVideoTitle] = useState(title);
   const [aiTitleDirty, setAiTitleDirty] = useState(false);
   const [coverTitleText, setCoverTitleText] = useState('');
+  const [excludeText, setExcludeText] = useState(DEFAULT_EXCLUDE_TEXT);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [source, setSource] = useState('');
@@ -124,7 +126,7 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   useEffect(() => { if (!aiTitleDirty) setAiVideoTitle(title); }, [title, aiTitleDirty]);
 
   useEffect(() => {
-    setDuration(0); setCurrentTime(0); setFrames([]); setMessage(''); setAiTitleDirty(false); setAiVideoTitle(title); setCoverTitleText('');
+    setDuration(0); setCurrentTime(0); setFrames([]); setMessage(''); setAiTitleDirty(false); setAiVideoTitle(title); setCoverTitleText(''); setExcludeText(DEFAULT_EXCLUDE_TEXT);
     if (!videoFile) { setVideoUrl(''); return; }
     const url = URL.createObjectURL(videoFile);
     setVideoUrl(url);
@@ -184,12 +186,13 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
   const generateAi = async () => {
     const videoTitle = aiVideoTitle.trim();
     const coverText = coverTitleText.trim();
+    const exclusions = excludeText.trim();
     if (!videoTitle) { setMessage('請先輸入影片標題'); return; }
     setAiBusy(true); setMessage('Cloudflare AI 正在理解標題並產生封面圖…');
     try {
       const data = await api<{ image: string; mimeType?: string }>('/api/youtube/studio/cover-ai', {
         method: 'POST',
-        body: JSON.stringify({ videoTitle, coverTitleText: coverText })
+        body: JSON.stringify({ videoTitle, coverTitleText: coverText, excludeText: exclusions })
       });
       const mime = data.mimeType || 'image/jpeg';
       const response = await fetch(`data:${mime};base64,${data.image}`);
@@ -216,6 +219,7 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
       <div className="cover-method-title"><span>1</span><div><b>Cloudflare AI 自動生圖</b><small>影片標題決定底圖；封面標題文字決定封面上的標題呈現</small></div></div>
       <label className="ai-cover-field"><span>影片標題</span><input value={aiVideoTitle} maxLength={300} onChange={e=>{setAiTitleDirty(true);setAiVideoTitle(e.target.value);}} placeholder="會自動抓取上方影片標題，也可自行修改"/><small>AI 會用這段文字理解影片內容並生成封面底圖。</small></label>
       <label className="ai-cover-field"><span>封面標題文字</span><input value={coverTitleText} maxLength={120} onChange={e=>setCoverTitleText(e.target.value)} placeholder="例如：每天10分鐘，找回健康活力"/><small>可留空；有輸入時，AI 會依這段文字規劃封面標題的字體、位置與視覺效果。</small></label>
+      <label className="ai-cover-field"><span>不要納入生圖</span><input value={excludeText} maxLength={500} onChange={e=>setExcludeText(e.target.value)} placeholder="例如：不要產品圖，不要人物"/><small>AI 會把這一欄當成排除條件，盡量避免生成這些內容。</small></label>
       <button className="btn primary wide" type="button" disabled={aiBusy} onClick={()=>void generateAi()}>{aiBusy?'AI 生圖中…':'✨ 生成封面圖'}</button>
     </div>
 
