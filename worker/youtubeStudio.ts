@@ -43,23 +43,39 @@ async function setThumbnail(request: Request, env: Env, user: LocalUser, videoId
   return json({ ok: true, thumbnailUrl: cleanText(thumbs?.high?.url || thumbs?.medium?.url || thumbs?.default?.url, 1000) });
 }
 
+function splitExcludeRules(excludeText: string): { suppressAutoText: boolean; genericExcludeText: string } {
+  const suppressAutoText = /不要\s*文字/.test(excludeText);
+  const genericExcludeText = excludeText
+    .replace(/不要\s*文字/g, '')
+    .split(/[，,、；;\n]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .join('、');
+  return { suppressAutoText, genericExcludeText };
+}
+
 async function buildSmartCoverPrompt(env: Env, videoTitle: string, coverTitleText: string, excludeText: string): Promise<string> {
-  const titleRule = coverTitleText
-    ? `Include exactly this visible cover headline: "${coverTitleText}". Preserve the wording and language exactly. Make it large, highly legible, visually balanced, and do not add any other readable text.`
-    : 'Do not render any readable text. Leave useful negative space for an optional future title.';
-  const exclusionRule = excludeText
-    ? `STRICT EXCLUSIONS: Do not include any of these contents in the image: ${excludeText}. Treat this as a hard visual restriction even if the video title might otherwise suggest them.`
-    : 'No additional user exclusions.';
-  const fallback = `Premium YouTube thumbnail directly about this video topic: ${videoTitle}. Infer the central subject faithfully from the video title and create only clearly relevant people, objects, symbols, and scenery. Cinematic 16:9 composition, one strong focal subject, premium professional lighting, strong hierarchy, no logos, no watermarks. ${titleRule} ${exclusionRule}`;
+  const { suppressAutoText, genericExcludeText } = splitExcludeRules(excludeText);
+  const titleRule = suppressAutoText
+    ? coverTitleText
+      ? `The only readable text allowed is exactly this user-supplied cover headline: "${coverTitleText}". Preserve the wording and language exactly. Make it large, highly legible, visually balanced, and do not add any other readable text. Never derive, invent, or render text from the background and main-visual brief.`
+      : 'Do not render any readable text anywhere. Never derive, invent, or render text from the background and main-visual brief.'
+    : coverTitleText
+      ? `Include exactly this visible cover headline: "${coverTitleText}". Preserve the wording and language exactly. Make it large, highly legible, visually balanced, and do not add any other readable text.`
+      : 'Do not render any readable text. Leave useful negative space for an optional future title.';
+  const exclusionRule = genericExcludeText
+    ? `STRICT EXCLUSIONS: Do not include any of these contents in the image: ${genericExcludeText}. Treat this as a hard visual restriction even if the background and main-visual brief might otherwise suggest them.`
+    : 'No additional visual exclusions.';
+  const fallback = `Premium YouTube thumbnail based directly on this background and main-visual brief: ${videoTitle}. Infer the central visual subject faithfully and create only clearly relevant people, objects, symbols, and scenery. Cinematic 16:9 composition, one strong focal subject, premium professional lighting, strong hierarchy, no logos, no watermarks. ${titleRule} ${exclusionRule}`;
 
   try {
     const planner = await env.AI!.run('@cf/qwen/qwen3-30b-a3b-fp8', {
-      prompt: `You are a YouTube thumbnail art director. Build one concise English image-generation prompt from three separate inputs.\n\nVIDEO TITLE (controls the background scene and visual subject):\n${videoTitle}\n\nCOVER HEADLINE (controls visible headline styling; may be empty):\n${coverTitleText || '[empty]'}\n\nDO NOT INCLUDE (hard exclusions; may be empty):\n${excludeText || '[empty]'}\n\nRules:\n- First understand the video title faithfully, including Chinese meaning.\n- The background scene and focal subject must come from the VIDEO TITLE, not from unrelated guesses.\n- Treat DO NOT INCLUDE as hard negative instructions. Translate their meaning if needed and explicitly tell the image model not to show those people, products, objects, styles, colors, scenes, or other excluded content.\n- The exclusions override any conflicting visual ideas from the VIDEO TITLE.\n- Never invent unrelated people, products, places, medical claims, brands, or objects.\n- Use a premium realistic/cinematic 16:9 YouTube thumbnail composition with one strong focal subject and clear visual hierarchy.\n- If the topic is abstract, use only an obvious, simple metaphor directly related to the video title.\n- If COVER HEADLINE is not empty, instruct the image model to render that exact headline, preserving its wording and language exactly, with large readable typography, strong contrast, safe margins, and no additional readable text.\n- If COVER HEADLINE is empty, instruct the image model not to render readable text and to leave clean negative space.\n- No logos or watermarks.\n- Output only the final image prompt, no explanation.`,
-      max_tokens: 320,
+      prompt: `You are a YouTube thumbnail art director. Build one concise English image-generation prompt from three separate inputs.\n\nBACKGROUND & MAIN VISUAL BRIEF (controls only the background scene and visual subject):\n${videoTitle}\n\nCOVER HEADLINE (user-supplied visible headline; may be empty):\n${coverTitleText || '[empty]'}\n\nDO NOT INCLUDE (hard exclusions; may be empty):\n${genericExcludeText || '[empty]'}\n\nNO AUTO TEXT FROM BACKGROUND BRIEF:\n${suppressAutoText ? 'YES' : 'NO'}\n\nRules:\n- First understand the BACKGROUND & MAIN VISUAL BRIEF faithfully, including Chinese meaning.\n- The background scene and focal subject must come from the BACKGROUND & MAIN VISUAL BRIEF, not from unrelated guesses.\n- Treat DO NOT INCLUDE as hard negative visual instructions. Translate their meaning if needed and explicitly tell the image model not to show those people, products, objects, styles, colors, scenes, or other excluded visual content.\n- The visual exclusions override any conflicting visual ideas from the BACKGROUND & MAIN VISUAL BRIEF.\n- If NO AUTO TEXT FROM BACKGROUND BRIEF is YES, never derive, invent, or render any readable text from the BACKGROUND & MAIN VISUAL BRIEF. This rule does NOT prohibit the user-supplied COVER HEADLINE.\n- If NO AUTO TEXT FROM BACKGROUND BRIEF is YES and COVER HEADLINE is not empty, the COVER HEADLINE is the only readable text allowed in the image.\n- Never invent unrelated people, products, places, medical claims, brands, objects, or extra wording.\n- Use a premium realistic/cinematic 16:9 YouTube thumbnail composition with one strong focal subject and clear visual hierarchy.\n- If the topic is abstract, use only an obvious, simple metaphor directly related to the background and main-visual brief.\n- If COVER HEADLINE is not empty, instruct the image model to render that exact headline, preserving its wording and language exactly, with large readable typography, strong contrast, safe margins, and no additional readable text.\n- If COVER HEADLINE is empty, instruct the image model not to render readable text and to leave clean negative space.\n- No logos or watermarks.\n- Output only the final image prompt, no explanation.`,
+      max_tokens: 340,
       temperature: 0.18,
       top_p: 0.82
     });
-    const refined = cleanText(planner?.response, 2200);
+    const refined = cleanText(planner?.response, 2400);
     return refined || fallback;
   } catch (error) {
     console.warn('Cloudflare smart cover prompt failed, using fallback', error instanceof Error ? error.message : 'unknown');
@@ -73,9 +89,10 @@ async function generateCover(request: Request, env: Env): Promise<Response> {
   const videoTitle = cleanText(body.videoTitle, 300);
   const coverTitleText = cleanText(body.coverTitleText, 120);
   const excludeText = cleanText(body.excludeText, 500);
-  if (!videoTitle) return json({ error: '請輸入影片標題' }, 400);
+  if (!videoTitle) return json({ error: '請輸入影片背景圖與主視覺' }, 400);
 
   try {
+    const { suppressAutoText } = splitExcludeRules(excludeText);
     const smartPrompt = await buildSmartCoverPrompt(env, videoTitle, coverTitleText, excludeText);
     const form = new FormData();
     form.append('prompt', smartPrompt);
@@ -98,7 +115,8 @@ async function generateCover(request: Request, env: Env): Promise<Response> {
       model: '@cf/black-forest-labs/flux-2-dev',
       smartPromptApplied: true,
       coverTitleApplied: Boolean(coverTitleText),
-      exclusionsApplied: Boolean(excludeText)
+      exclusionsApplied: Boolean(excludeText),
+      suppressAutoText
     });
   } catch (error) {
     console.error('Cloudflare cover AI failed', error instanceof Error ? error.message : 'unknown');
