@@ -79,8 +79,9 @@ async function playlistItemId(token: string, playlistId: string, videoId: string
 
 async function playlistMemberships(token: string, playlists: PlaylistSummary[], videoId: string): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
-  for (let i = 0; i < playlists.length; i += 6) {
-    const batch = playlists.slice(i, i + 6);
+  const batchSize = 20;
+  for (let i = 0; i < playlists.length; i += batchSize) {
+    const batch = playlists.slice(i, i + batchSize);
     const rows = await Promise.all(batch.map(async playlist => ({
       playlistId: playlist.id,
       itemId: await playlistItemId(token, playlist.id, videoId)
@@ -123,9 +124,11 @@ async function getVideoEditor(env: Env, user: LocalUser, videoId: string): Promi
   const access = await requireWrite(env, user);
   if (access instanceof Response) return access;
   try {
-    const item = await readVideo(access.token, videoId);
+    const [item, playlists] = await Promise.all([
+      readVideo(access.token, videoId),
+      listOwnedPlaylists(access.token)
+    ]);
     if (!item) return json({ error: '找不到這支 YouTube 影片' }, 404);
-    const playlists = await listOwnedPlaylists(access.token);
     const memberships = await playlistMemberships(access.token, playlists, videoId);
     return json({
       video: publicVideoEditor(item, videoId),
