@@ -187,8 +187,8 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
     const videoTitle = aiVideoTitle.trim();
     const coverText = coverTitleText.trim();
     const exclusions = excludeText.trim();
-    if (!videoTitle) { setMessage('請先輸入影片標題'); return; }
-    setAiBusy(true); setMessage('Cloudflare AI 正在理解標題並產生封面圖…');
+    if (!videoTitle) { setMessage('請先輸入影片背景圖與主視覺'); return; }
+    setAiBusy(true); setMessage('Cloudflare AI 正在理解背景圖與主視覺並產生封面圖…');
     try {
       const data = await api<{ image: string; mimeType?: string }>('/api/youtube/studio/cover-ai', {
         method: 'POST',
@@ -199,7 +199,7 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
       const blob = await response.blob();
       const raw = new File([blob], 'cover-ai-source.jpg', { type: mime });
       const normalized = await normalizeImage(raw, 'cover-ai.jpg');
-      selectCover(normalized, coverText ? 'AI 底圖＋封面標題生成' : 'AI 依影片標題生成');
+      selectCover(normalized, coverText ? 'AI 底圖＋封面標題生成' : 'AI 依主視覺生成');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'AI 生圖失敗，請稍後再試');
     } finally {
@@ -216,10 +216,10 @@ export default function CoverStudio({ videoFile, title, value, onChange }: Props
     {selectedUrl && <div className="cover-selected"><img src={selectedUrl} alt="目前選擇的封面"/><span>目前封面</span></div>}
 
     <div className="cover-method ai-cover-method">
-      <div className="cover-method-title"><span>1</span><div><b>Cloudflare AI 自動生圖</b><small>影片標題決定底圖；封面標題文字決定封面上的標題呈現</small></div></div>
-      <label className="ai-cover-field"><span>影片標題</span><input value={aiVideoTitle} maxLength={300} onChange={e=>{setAiTitleDirty(true);setAiVideoTitle(e.target.value);}} placeholder="會自動抓取上方影片標題，也可自行修改"/><small>AI 會用這段文字理解影片內容並生成封面底圖。</small></label>
+      <div className="cover-method-title"><span>1</span><div><b>Cloudflare AI 自動生圖</b><small>背景圖與主視覺決定底圖；封面標題文字決定封面上的標題呈現</small></div></div>
+      <label className="ai-cover-field"><span>影片背景圖與主視覺</span><input value={aiVideoTitle} maxLength={300} onChange={e=>{setAiTitleDirty(true);setAiVideoTitle(e.target.value);}} placeholder="會自動抓取上方影片標題，也可自行修改背景圖與主視覺"/><small>AI 會用這段文字理解並生成封面的背景圖與主視覺。</small></label>
       <label className="ai-cover-field"><span>封面標題文字</span><input value={coverTitleText} maxLength={120} onChange={e=>setCoverTitleText(e.target.value)} placeholder="例如：每天10分鐘，找回健康活力"/><small>可留空；有輸入時，AI 會依這段文字規劃封面標題的字體、位置與視覺效果。</small></label>
-      <label className="ai-cover-field"><span>不要納入生圖</span><input value={excludeText} maxLength={500} onChange={e=>setExcludeText(e.target.value)} placeholder={EXCLUDE_PLACEHOLDER}/><small>淺色文字只是輸入提示，不會自動套用；有輸入內容時，AI 才會把它當成排除條件。</small></label>
+      <label className="ai-cover-field"><span>不要納入生圖</span><input value={excludeText} maxLength={500} onChange={e=>setExcludeText(e.target.value)} placeholder={EXCLUDE_PLACEHOLDER}/><small>輸入「不要文字」時，只禁止 AI 從背景圖與主視覺自動加字；你在「封面標題文字」輸入的文字仍會保留並生成。</small></label>
       <button className="btn primary wide" type="button" disabled={aiBusy} onClick={()=>void generateAi()}>{aiBusy?'AI 生圖中…':'✨ 生成封面圖'}</button>
     </div>
 
