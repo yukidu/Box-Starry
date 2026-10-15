@@ -5,6 +5,7 @@ import { cleanText, json } from './security';
 import { youtubeAccessToken, youtubeStudioReady } from './youtube';
 import { handleYoutubeStudio } from './youtubeStudio';
 import { handleYoutubeStudioExtended } from './youtubeStudioExtended';
+import { recordYoutubeUploadAttempt, youtubeUploadQuotaEstimate } from './youtubeUploadQuota';
 
 const THUMBNAIL_ROUTE = /^\/api\/youtube\/studio\/thumbnail\/([A-Za-z0-9_-]{6,32})$/;
 const THUMBNAIL_RETRY_DELAYS = [0, 1200, 3000, 6000];
@@ -143,6 +144,9 @@ export default {
       if (url.pathname === '/api/youtube/studio/status' && request.method === 'GET') {
         return youtubeIntermediateStatus(env, user);
       }
+      if (url.pathname === '/api/youtube/studio/upload-quota' && request.method === 'GET') {
+        return json(await youtubeUploadQuotaEstimate(env));
+      }
 
       const thumbnailMatch = url.pathname.match(THUMBNAIL_ROUTE);
       if (thumbnailMatch && request.method === 'POST') {
@@ -154,6 +158,17 @@ export default {
       const response = await handleYoutubeStudio(request, env, user);
       if (response) return response;
     }
+
+    if (url.pathname === '/api/youtube/upload-session' && request.method === 'POST') {
+      const response = await baseWorker.fetch(request, env);
+      if (response.ok || response.status === 502) {
+        await recordYoutubeUploadAttempt(env).catch(error => {
+          console.warn('YouTube upload quota estimate update failed', error instanceof Error ? error.message : 'unknown');
+        });
+      }
+      return response;
+    }
+
     return baseWorker.fetch(request, env);
   }
 };
