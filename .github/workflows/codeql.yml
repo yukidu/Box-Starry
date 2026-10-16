@@ -1,12 +1,15 @@
 name: CodeQL security scan
 
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
   schedule:
     - cron: "49 2 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
