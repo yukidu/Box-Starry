@@ -2,8 +2,8 @@ import type { Env } from './types';
 
 const MONITORING_SCOPE = 'https://www.googleapis.com/auth/monitoring.read';
 const YOUTUBE_SERVICE = 'youtube.googleapis.com';
-const VIDEO_INSERT_QUOTA_METRIC = 'youtube.googleapis.com/video_insert';
-const VIDEO_INSERT_LIMIT_NAME = 'defaultVideoInserterPerDayPerProject';
+const EXPECTED_VIDEO_INSERT_QUOTA_METRIC = 'youtube.googleapis.com/video_insert';
+const EXPECTED_VIDEO_INSERT_LIMIT_NAME = 'defaultVideoInserterPerDayPerProject';
 const PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
 type ServiceAccount = {
@@ -17,7 +17,11 @@ type TimeSeriesPoint = {
   value?: { int64Value?: string; doubleValue?: number };
 };
 
-type TimeSeries = { points?: TimeSeriesPoint[] };
+type TimeSeries = {
+  metric?: { labels?: Record<string, string> };
+  points?: TimeSeriesPoint[];
+};
+
 type TimeSeriesResponse = { timeSeries?: TimeSeries[]; nextPageToken?: string };
 
 function base64UrlBytes(bytes: Uint8Array): string {
@@ -36,6 +40,12 @@ function pemToBytes(pem: string): Uint8Array {
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return bytes;
+}
+
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 async function serviceAccountToken(env: Env): Promise<string> {
@@ -61,12 +71,16 @@ async function serviceAccountToken(env: Env): Promise<string> {
   const unsigned = `${header}.${claims}`;
   const key = await crypto.subtle.importKey(
     'pkcs8',
-    pemToBytes(account.private_key),
+    ownedArrayBuffer(pemToBytes(account.private_key)),
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']
   );
-  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned));
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    ownedArrayBuffer(new TextEncoder().encode(unsigned))
+  );
   const assertion = `${unsigned}.${base64UrlBytes(new Uint8Array(signature))}`;
 
   const response = await fetch(tokenUri, {
@@ -117,7 +131,13 @@ async function listTimeSeries(env: Env, token: string, metricType: string, extra
   let pageToken = '';
   do {
     const endpoint = new URL(`https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(project)}/timeSeries`);
-    endpoint.searchParams.set('filter', `metric.type="${metricType}" AND resource.type="consumer_quota" AND resource.label."service"="${YOUTUBE_SERVICE}" AND ${extraFilter}`);
+    const filters = [
+      `metric.type="${metricType}"`,
+      'resource.type="consumer_quota"',
+      `resource.label."service"="${YOUTUBE_SERVICE}"`
+    ];
+    if (extraFilter) filters.push(extraFilter);
+    endpoint.searchParams.set('filter', filters.join(' AND '));
     endpoint.searchParams.set('interval.startTime', start.toISOString());
     endpoint.searchParams.set('interval.endTime', end.toISOString());
     endpoint.searchParams.set('view', 'FULL');
@@ -132,40 +152,58 @@ async function listTimeSeries(env: Env, token: string, metricType: string, extra
   return all;
 }
 
+function looksLikeVideoInsert(value: string): boolean {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return normalized.includes('video') && (normalized.includes('insert') || normalized.includes('upload'));
+}
+
+function discoverVideoInsertQuota(limitSeries: TimeSeries[]): { quotaMetric: string; limitName: string; dailyLimit: number } {
+  const candidates = limitSeries.map(series => {
+    const labels = series.metric?.labels || {};
+    const quotaMetric = String(labels.quota_metric || '');
+    const limitName = String(labels.limit_name || '');
+    const values = (series.points || []).map(pointNumber).filter(value => Number.isFinite(value) && value > 0);
+    return { quotaMetric, limitName, dailyLimit: values.length ? Math.max(...values) : 0 };
+  }).filter(item => item.dailyLimit > 0 && (looksLikeVideoInsert(item.quotaMetric) || looksLikeVideoInsert(item.limitName)));
+
+  const exact = candidates.find(item => item.quotaMetric === EXPECTED_VIDEO_INSERT_QUOTA_METRIC)
+    || candidates.find(item => item.limitName === EXPECTED_VIDEO_INSERT_LIMIT_NAME)
+    || candidates[0];
+  if (!exact) throw new Error('google_video_insert_quota_not_visible');
+  return exact;
+}
+
 export async function googleYoutubeUploadQuota(env: Env) {
   const token = await serviceAccountToken(env);
   const now = new Date();
   const dayStart = pacificDayStart(now);
-  const quotaFilter = `metric.label."quota_metric"="${VIDEO_INSERT_QUOTA_METRIC}"`;
+  const limitStart = new Date(now.getTime() - 7 * 86400_000);
+
+  const allYoutubeLimits = await listTimeSeries(
+    env,
+    token,
+    'serviceruntime.googleapis.com/quota/limit',
+    '',
+    limitStart,
+    now
+  );
+  const { quotaMetric, limitName, dailyLimit } = discoverVideoInsertQuota(allYoutubeLimits);
 
   const usageSeries = await listTimeSeries(
     env,
     token,
     'serviceruntime.googleapis.com/quota/rate/net_usage',
-    quotaFilter,
+    `metric.label."quota_metric"="${quotaMetric}"`,
     dayStart,
     now
   );
   const used = Math.max(0, Math.round(usageSeries.reduce((sum, series) => sum + (series.points || []).reduce((pointSum, point) => pointSum + pointNumber(point), 0), 0)));
 
-  const limitStart = new Date(now.getTime() - 7 * 86400_000);
-  const limitSeries = await listTimeSeries(
-    env,
-    token,
-    'serviceruntime.googleapis.com/quota/limit',
-    `${quotaFilter} AND metric.label."limit_name"="${VIDEO_INSERT_LIMIT_NAME}"`,
-    limitStart,
-    now
-  );
-  const limits = limitSeries.flatMap(series => (series.points || []).map(pointNumber)).filter(value => Number.isFinite(value) && value > 0);
-  if (!limits.length) throw new Error('google_video_insert_quota_not_visible');
-  const dailyLimit = Math.max(...limits);
-
   return {
     source: 'google_cloud',
     official: true,
-    quotaMetric: VIDEO_INSERT_QUOTA_METRIC,
-    limitName: VIDEO_INSERT_LIMIT_NAME,
+    quotaMetric,
+    limitName,
     dailyLimit,
     used,
     remaining: Math.max(0, dailyLimit - used),
