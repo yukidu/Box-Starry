@@ -35,6 +35,8 @@ export interface Env {
   YOUTUBE_CLIENT_ID?: string;
   YOUTUBE_CLIENT_SECRET?: string;
   YOUTUBE_TOKEN_ENCRYPTION_KEY?: string;
+  GOOGLE_CLOUD_PROJECT_NUMBER?: string;
+  GOOGLE_MONITORING_SERVICE_ACCOUNT_JSON?: string;
 }
 
 export interface LocalUser {

@@ -19,7 +19,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = await response.json().catch(() => ({}));
   if (path === '/api/youtube/upload-session' && method === 'POST') {
-    window.dispatchEvent(new CustomEvent('box-youtube-upload-quota-changed'));
+    window.dispatchEvent(new CustomEvent('box-google-quota-refresh'));
   }
   if (!response.ok) throw new Error(data.error || '操作失敗，請稍後再試');
   if (path === '/api/videos' && method === 'POST') {
