@@ -5,7 +5,7 @@ import { cleanText, json } from './security';
 import { youtubeAccessToken, youtubeStudioReady } from './youtube';
 import { handleYoutubeStudio } from './youtubeStudio';
 import { handleYoutubeStudioExtended } from './youtubeStudioExtended';
-import { recordYoutubeUploadAttempt, youtubeUploadQuotaEstimate } from './youtubeUploadQuota';
+import { googleYoutubeUploadQuota } from './googleCloudQuota';
 
 const THUMBNAIL_ROUTE = /^\/api\/youtube\/studio\/thumbnail\/([A-Za-z0-9_-]{6,32})$/;
 const THUMBNAIL_RETRY_DELAYS = [0, 1200, 3000, 6000];
@@ -145,7 +145,19 @@ export default {
         return youtubeIntermediateStatus(env, user);
       }
       if (url.pathname === '/api/youtube/studio/upload-quota' && request.method === 'GET') {
-        return json(await youtubeUploadQuotaEstimate(env));
+        try {
+          return json(await googleYoutubeUploadQuota(env));
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'unknown';
+          console.error('Google official upload quota unavailable', reason);
+          if (reason === 'google_monitoring_not_configured') {
+            return json({ error: 'Google 官方配額尚未完成連線設定', code: 'google_quota_not_configured' }, 503);
+          }
+          if (reason === 'google_video_insert_quota_not_visible') {
+            return json({ error: 'Google Cloud 尚未回傳 Video Uploads 官方配額資料', code: 'google_quota_not_visible' }, 503);
+          }
+          return json({ error: '暫時無法讀取 Google 官方配額，請稍後再試', code: 'google_quota_unavailable' }, 503);
+        }
       }
 
       const thumbnailMatch = url.pathname.match(THUMBNAIL_ROUTE);
@@ -157,16 +169,6 @@ export default {
       if (extended) return extended;
       const response = await handleYoutubeStudio(request, env, user);
       if (response) return response;
-    }
-
-    if (url.pathname === '/api/youtube/upload-session' && request.method === 'POST') {
-      const response = await baseWorker.fetch(request, env);
-      if (response.ok || response.status === 502) {
-        await recordYoutubeUploadAttempt(env).catch(error => {
-          console.warn('YouTube upload quota estimate update failed', error instanceof Error ? error.message : 'unknown');
-        });
-      }
-      return response;
     }
 
     return baseWorker.fetch(request, env);
