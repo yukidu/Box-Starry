@@ -2,6 +2,10 @@ name: Regression
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/dependabot.yml'
   workflow_dispatch:
 
 concurrency:
