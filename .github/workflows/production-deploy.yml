@@ -127,14 +127,14 @@ jobs:
           eye_health="$(curl -fsS --max-time 10 https://eye.starry.phd/api/health)"
           printf '%s' "$eye_health" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.ok||!j.environmentReady||!j.youtubeOAuthReady){console.error(j);process.exit(1)}})"
           echo '[verify] eye health passed'
-          eye_privacy="$(curl -fsS --max-time 10 https://eye.starry.phd/privacy.html)"
+          eye_privacy="$(curl -fsS --max-time 10 https://eye.starry.phd/privacy)"
           echo "[verify] eye privacy bytes: ${#eye_privacy}"
           printf '%s' "$eye_privacy" | grep -q 'AES-GCM'
           echo '[verify] AES-GCM privacy disclosure passed'
           printf '%s' "$eye_privacy" | grep -q '繁星視界 Starry Eye'
           echo '[verify] Starry Eye brand privacy text passed'
-          curl -fsS --max-time 10 https://eye.starry.phd/terms.html >/dev/null
-          curl -fsS --max-time 10 https://eye.starry.phd/about.html >/dev/null
+          curl -fsS --max-time 10 https://eye.starry.phd/terms >/dev/null
+          curl -fsS --max-time 10 https://eye.starry.phd/about >/dev/null
 
           echo '[verify] eye legal pages passed'
           starry_redirect="$(curl -sS -o /dev/null -w '%{redirect_url}' --max-time 10 https://box.starry.phd/auth/starry)"
