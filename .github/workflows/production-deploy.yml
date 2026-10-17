@@ -141,5 +141,5 @@ jobs:
           printf '%s' "$starry_redirect" | grep -q '^https://id.starry.phd/auth/boxstarry$'
 
           echo '[verify] Starry ID redirect passed'
-          curl -fsS --max-time 10 https://id.starry.phd/auth/boxstarry | grep -q 'Starry ID × 繁星膠囊'
-          echo "Box Starry production health, legal pages and Starry ID entry are verified."
+          curl -fsS --max-time 10 https://id.starry.phd/auth/boxstarry | grep -q 'Starry ID'
+          echo "Starry Eye production, legal pages and Starry ID entry are verified."
