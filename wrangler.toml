@@ -1,3 +1,4 @@
+# Worker 內部名稱暫時保留 box-starry，避免既有 Secrets、D1 與 YouTube 授權失效；公開品牌與正式網址已統一為 Starry Eye／繁星視界。
 name = "box-starry"
 main = "worker/studioRouter.ts"
 compatibility_date = "2026-10-01"
@@ -8,6 +9,12 @@ directory = "./dist"
 binding = "ASSETS"
 run_worker_first = ["/api/*", "/auth/*"]
 
+# 正式網址
+[[routes]]
+pattern = "eye.starry.phd"
+custom_domain = true
+
+# 舊網址暫時保留相容，避免既有 OAuth／書籤立即失效；不再作為公開連結。
 [[routes]]
 pattern = "box.starry.phd"
 custom_domain = true
