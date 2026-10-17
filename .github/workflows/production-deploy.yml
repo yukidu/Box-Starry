@@ -141,5 +141,10 @@ jobs:
           printf '%s' "$starry_redirect" | grep -q '^https://id.starry.phd/auth/boxstarry$'
 
           echo '[verify] Starry ID redirect passed'
-          curl -fsS --max-time 10 https://id.starry.phd/auth/boxstarry | grep -q 'Starry ID'
+          # Starry ID 的登入入口可能直接回傳 302，無 HTML 內文。
+          starry_entry_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://id.starry.phd/auth/boxstarry)"
+          case "$starry_entry_status" in
+            200|302|303|307|308) echo "[verify] Starry ID entry returned HTTP $starry_entry_status" ;;
+            *) echo "Starry ID login entry returned unexpected HTTP $starry_entry_status"; exit 1 ;;
+          esac
           echo "Starry Eye production, legal pages and Starry ID entry are verified."
