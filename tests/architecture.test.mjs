@@ -214,14 +214,14 @@ test('YouTube authorization can be revoked and Box-specific data can be deleted'
   assert.match(worker, /DELETE FROM share_links WHERE owner_user_id=\?/);
   assert.match(worker, /DELETE FROM videos WHERE owner_user_id=\?/);
   assert.match(worker, /DELETE FROM users WHERE id=\?/);
-  assert.match(library, /刪除我的 Box Starry 資料/);
+  assert.match(library, /刪除我的繁星視界資料/);
 });
 
 test('public privacy policy discloses YouTube read and upload data handling', () => {
   assert.match(library, /function PrivacyPolicyPage/);
   assert.match(library, /YouTube API Services/);
   assert.match(library, /Google 隱私權政策/);
-  assert.match(library, /唯讀取得你自己的頻道與影片清單/);
+  assert.match(library, /取得自己的頻道與影片清單/);
   assert.match(app, /path==='\/privacy'/);
   assert.match(app, /path==='\/terms'/);
 });
