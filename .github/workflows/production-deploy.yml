@@ -107,6 +107,27 @@ jobs:
           curl -fsS --max-time 10 https://box.starry.phd/privacy >/dev/null
           curl -fsS --max-time 10 https://box.starry.phd/terms >/dev/null
 
+          # 新正式網域為 OAuth 審核主要網址；舊網址繼續相容。
+          eye_ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 10 https://eye.starry.phd/ >/dev/null; then
+              eye_ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$eye_ready" -ne 1 ]; then
+            echo "Starry Eye production domain did not become reachable."
+            exit 1
+          fi
+          eye_health="$(curl -fsS --max-time 10 https://eye.starry.phd/api/health)"
+          printf '%s' "$eye_health" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.ok||!j.environmentReady||!j.youtubeOAuthReady){console.error(j);process.exit(1)}})"
+          eye_privacy="$(curl -fsS --max-time 10 https://eye.starry.phd/privacy.html)"
+          printf '%s' "$eye_privacy" | grep -q 'AES-GCM'
+          printf '%s' "$eye_privacy" | grep -q '繁星視界 Starry Eye'
+          curl -fsS --max-time 10 https://eye.starry.phd/terms.html >/dev/null
+          curl -fsS --max-time 10 https://eye.starry.phd/about.html >/dev/null
+
           starry_redirect="$(curl -sS -o /dev/null -w '%{redirect_url}' --max-time 10 https://box.starry.phd/auth/starry)"
           printf '%s' "$starry_redirect" | grep -q '^https://id.starry.phd/auth/boxstarry$'
 

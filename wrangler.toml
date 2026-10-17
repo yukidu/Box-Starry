@@ -37,3 +37,20 @@ binding = "AI"
 YOUTUBE_CLIENT_ID = "798843680414-rt8bh32bbqe9tr7koi96avub347us89b.apps.googleusercontent.com"
 
 # YOUTUBE_CLIENT_SECRET 與 YOUTUBE_TOKEN_ENCRYPTION_KEY 必須使用 Cloudflare Secrets，不能寫入 GitHub。
+
+# 獨立的 Cloudflare 預覽環境：禁止連線至正式會員資料庫。
+[previews.vars]
+YOUTUBE_CLIENT_ID = "preview-disabled"
+
+[[previews.d1_databases]]
+binding = "DB"
+database_name = "box-starry-preview-db"
+database_id = "8ec130e9-c16d-4b76-b3e1-87718cb2280f"
+
+[[previews.d1_databases]]
+binding = "STARRY_ID_DB"
+database_name = "box-starry-preview-id-db"
+database_id = "cc5f5aa8-e078-4399-88e6-8a149cf77562"
+
+[previews.ai]
+binding = "AI"

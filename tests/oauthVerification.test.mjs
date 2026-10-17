@@ -8,7 +8,7 @@ const terms = readFileSync(new URL('../public/terms.html', import.meta.url), 'ut
 const youtube = readFileSync(new URL('../worker/youtube.ts', import.meta.url), 'utf8');
 
 test('OAuth public homepage is review-ready and links policy pages', () => {
-  assert.match(about, /繁星膠囊 Box Starry/);
+  assert.match(about, /繁星視界 Starry Eye/);
   assert.match(about, /YouTube/);
   assert.match(about, /\/privacy\.html/);
   assert.match(about, /\/terms\.html/);
@@ -23,6 +23,9 @@ test('privacy page discloses Google data handling and Limited Use', () => {
   assert.match(privacy, /明確勾選的 YouTube 播放清單/);
   assert.match(privacy, /不販售 Google \/ YouTube 使用者資料/);
   assert.match(privacy, /解除 YouTube 授權/);
+  assert.match(privacy, /AES-GCM/);
+  assert.match(privacy, /HTTPS/);
+  assert.match(privacy, /youtube.force-ssl/);
 });
 
 test('terms identify YouTube integration and revocation controls', () => {
